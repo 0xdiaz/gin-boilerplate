@@ -635,7 +635,7 @@ REPLICA_DB_PORT=5432
 - ⚠️ Set `MASTER_DB_LOG_MODE=False` in production
 - ⚠️ Never commit `.env` to version control
 
-Lengkap: [.env.example](.env.example) dan [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+Full reference: [.env.example](.env.example) and [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### Database Configuration
 
@@ -930,7 +930,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Built with ❤️ by the team**
+**Built by the team**
 
 **[⬆ Back to Top](#-go-gin-enterprise-boilerplate)**
 

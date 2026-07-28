@@ -1,129 +1,137 @@
 # Go Project Design Patterns & Architecture Blueprint
 
-**Version:** 1.0
-**Last Updated:** 2025-11-08
-**Project:** Go Gin Boilerplate - Universal Starter Kit
+**Version:** 2.0
+**Last Updated:** 2026-06-10
+**Project:** Go Gin Modular Service — Universal Starter Kit
 
 ---
 
 ## ⚠️ FOR AI AGENTS - READ THIS FIRST
 
-> **🚨 CRITICAL: Read [`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md) BEFORE reading this document!**
+> **🚨 SOURCE OF TRUTH: [`MODULE_GUIDE.md`](./MODULE_GUIDE.md) describes how code is organized in this service.**
+> Where this document and `MODULE_GUIDE.md` ever disagree on **folder structure**, `MODULE_GUIDE.md` wins.
 >
-> **This document is 2479 lines.** The critical rules file is 100 lines and contains NON-NEGOTIABLE patterns.
->
-> **Skip = Fail:** The #1 mistake is not reading the struct-based patterns.
+> **The canonical reference module is [`internal/modules/example`](../internal/modules/example).**
+> Copy that module to create a new one. Every code example below is modelled on it.
 
-### 🔥 Critical Sections in This Document (MUST READ)
+### 🔥 Non-negotiable patterns (MUST follow)
 
-After reading `00_AI_CRITICAL_RULES.md`, focus on these sections:
-
-- **Lines 900-948:** Struct-based Controller Pattern (MANDATORY)
-- **Lines 984-1016:** Struct-based Service Pattern (MANDATORY)
-- **Lines 1070-1100:** Response Utility Pattern (MANDATORY)
-- **Lines 439-492:** Dependency Injection Pattern (MANDATORY)
+- **Package-by-feature, not by layer.** A module owns its full vertical slice
+  (`handler → service → repository → model`) in one folder: `internal/modules/<name>/`.
+- **Consumer-defined interfaces + constructor injection.** The handler defines the
+  `service` interface it needs; the service defines the `repository` interface it needs.
+  Dependencies are passed in via `New(...)`, never reached for via globals.
+- **Cross-module access only through a module's public interface** (`Module.API()`,
+  `auth.Servicer`), injected through the constructor. Never import another module's
+  unexported types.
+- **All HTTP responses go through `pkg/utils`** (`utils.Ok`, `utils.BadRequest`,
+  `utils.RespondWithAPIError`, …). Never write `c.JSON(...)` by hand for API responses.
+- **`pkg/` is the shared kit and must never import from `internal/`.**
 
 ### 📖 How to Use This Document
 
-1. ✅ Read `00_AI_CRITICAL_RULES.md` first (100 lines)
-2. ✅ Read critical sections listed above
-3. ⚠️  Skim other sections for context
-4. 📚 Use as reference for detailed patterns
+1. ✅ Read `MODULE_GUIDE.md` first (the layout source of truth, ~100 lines).
+2. ✅ Skim the reference module `internal/modules/example/` — it is the living version of this doc.
+3. ⚠️  Read the Implementation Patterns and Anti-Patterns sections in full.
+4. 📚 Use the rest as reference for detailed patterns.
 
 ---
 
 ## 📋 Table of Contents
 
-> **Quick Navigation:** Use Ctrl+F with line numbers (e.g., "L900") or search keywords
+> **Navigation:** anchors are stable; use Ctrl+F on a keyword or click the section links.
 
 ### 🔥 Critical Sections (MUST READ)
 
-| Section | Lines | Time | Keywords |
-|---------|-------|------|----------|
-| [6. Implementation Patterns](#6-implementation-patterns) | L919-1173 | 8 min | `struct`, `controller`, `service`, `repository` |
-| → [6.1 Struct-Based Controller](#61-struct-based-controller-pattern) | L921-1005 | 3 min | `NewController`, `DI`, `struct methods` |
-| → [6.2 Struct-Based Service](#62-struct-based-service-pattern) | L1006-1040 | 2 min | `NewService`, `business logic` |
-| → [6.3 Function-Based Repository](#63-function-based-repository-pattern) | L1041-1092 | 2 min | `CRUD`, `GetByID`, `Create`, `Update` |
-| [13. Anti-Patterns](#13-anti-patterns-to-avoid) | L2301-2460 | 4 min | `wrong`, `bad`, `avoid`, `anti-pattern` |
+| Section | Keywords |
+|---------|----------|
+| [6. Implementation Patterns](#6-implementation-patterns) | `module`, `handler`, `service`, `repository` |
+| → [6.1 Handler Pattern](#61-handler-pattern) | `Handler`, `NewHandler`, `service interface` |
+| → [6.2 Service Pattern](#62-service-pattern) | `Service`, `NewService`, `repository interface` |
+| → [6.3 Repository Pattern](#63-repository-pattern) | `Repository`, `NewRepository(db)`, injected `*gorm.DB` |
+| → [6.4 Module Wiring](#64-module-wiring-pattern) | `Module`, `New(db)`, `Models`, `RegisterRoutes`, `API` |
+| [13. Anti-Patterns](#13-anti-patterns-to-avoid) | `wrong`, `bad`, `avoid`, `anti-pattern` |
 
 ### 📚 All Sections
 
-| # | Section | Lines | Keywords |
-|---|---------|-------|----------|
-| 1 | [Overview](#1-overview) | L53-98 | `philosophy`, `goals`, `principles` |
-| 1.1 | [Architecture Philosophy](#11-architecture-philosophy) | L55-100 | `clean architecture`, `why patterns` |
-| 2 | [Project Architecture](#2-project-architecture) | L99-153 | `layers`, `architecture`, `separation` |
-| 2.1 | [Clean Architecture Layers](#21-clean-architecture-layers) | L101-134 | `layer`, `controller`, `service`, `repository` |
-| 2.2 | [Dependency Flow Rules](#22-dependency-flow-rules) | L135-153 | `dependency`, `direction`, `flow` |
-| 3 | [Core Design Patterns](#3-core-design-patterns) | L154-516 | `patterns`, `repository`, `factory`, `DI` |
-| 3.1 | [Repository Pattern](#31-repository-pattern) | L156-227 | `repository`, `data access`, `CRUD` |
-| 3.2 | [Service Layer Pattern](#32-service-layer-pattern) | L228-303 | `service`, `business logic`, `orchestration` |
-| 3.3 | [DTO Pattern](#33-dto-data-transfer-object-pattern) | L304-368 | `DTO`, `data transfer`, `request`, `response` |
-| 3.4 | [Factory Pattern](#34-factory-pattern) | L369-409 | `factory`, `New*`, `constructor` |
-| 3.5 | [Middleware Pattern](#35-middleware-pattern) | L410-462 | `middleware`, `gin.HandlerFunc`, `c.Next()` |
-| 3.6 | [Dependency Injection](#36-dependency-injection-pattern) | L463-516 | `DI`, `injection`, `constructor` |
-| 4 | [Directory Structure](#4-directory-structure-standard) | L517-682 | `directory`, `folder`, `structure`, `tree` |
-| 4.1 | [Complete Project Structure](#41-complete-project-structure) | L519-638 | `project tree`, `full structure` |
-| 4.2 | [Package Organization](#42-package-organization-rules) | L639-682 | `package`, `internal`, `pkg`, `cmd` |
-| 5 | [Layer Responsibilities](#5-layer-responsibilities) | L683-918 | `responsibilities`, `what`, `where` |
-| 5.1 | [Controller Layer](#51-controller-layer-thin-layer) | L685-731 | `controller`, `thin`, `HTTP`, `validation` |
-| 5.2 | [Service Layer](#52-service-layer-fat-layer) | L732-810 | `service`, `fat`, `business logic` |
-| 5.3 | [Repository Layer](#53-repository-layer-data-layer) | L811-918 | `repository`, `database`, `CRUD`, `GORM` |
-| 6 | [Implementation Patterns](#6-implementation-patterns) | L919-1173 | `how to`, `implementation`, `code` |
-| 6.1 | [Struct-Based Controller](#61-struct-based-controller-pattern) | L921-1005 | `controller struct`, `NewController`, `methods` |
-| 6.2 | [Struct-Based Service](#62-struct-based-service-pattern) | L1006-1040 | `service struct`, `NewService`, `methods` |
-| 6.3 | [Function-Based Repository](#63-function-based-repository-pattern) | L1041-1092 | `repository functions`, `CreateUser`, `GetByID` |
-| 6.4 | [Response Utility Pattern](#64-response-utility-pattern) | L1093-1173 | `utils.Ok`, `response`, `standard format` |
-| 7 | [Request Flow Patterns](#7-request-flow-patterns) | L1174-1362 | `flow`, `request`, `lifecycle`, `pipeline` |
-| 7.1 | [Standard CRUD Flow](#71-standard-crud-flow) | L1176-1268 | `CRUD`, `create`, `read`, `update`, `delete` |
-| 7.2 | [Authentication Flow](#72-authentication-flow-pattern) | L1269-1318 | `auth`, `login`, `JWT`, `token` |
-| 7.3 | [Transaction Flow](#73-transaction-flow-pattern) | L1319-1362 | `transaction`, `Begin()`, `Commit()`, `Rollback()` |
-| 8 | [Data Flow Patterns](#8-data-flow-patterns) | L1363-1484 | `data`, `transformation`, `mapping` |
-| 8.1 | [Request → Response Transform](#81-request--response-data-transformation) | L1365-1433 | `transform`, `DTO`, `model`, `mapping` |
-| 8.2 | [DTO vs Model Usage](#82-dto-vs-model-usage) | L1434-1484 | `when`, `DTO`, `model`, `difference` |
-| 9 | [Error Handling Patterns](#9-error-handling-patterns) | L1485-1613 | `error`, `handling`, `recovery`, `logging` |
-| 9.1 | [Error Flow](#91-error-flow-pattern) | L1487-1516 | `error flow`, `propagation` |
-| 9.2 | [Custom Error Types](#92-custom-error-types) | L1517-1562 | `custom error`, `typed error` |
-| 9.3 | [Error Wrapping](#93-error-wrapping-pattern) | L1563-1613 | `%w`, `fmt.Errorf`, `wrapping` |
-| 10 | [Testing Patterns](#10-testing-patterns) | L1614-1780 | `test`, `testing`, `mock`, `coverage` |
-| 10.1 | [Service Layer Testing](#101-service-layer-testing-pattern) | L1616-1736 | `service test`, `mock`, `setup` |
-| 10.2 | [Table-Driven Testing](#102-table-driven-testing-pattern) | L1737-1780 | `table test`, `subtests`, `t.Run` |
-| 11 | [Feature Implementation Guide](#11-complete-feature-implementation-guide) | L1781-2196 | `step by step`, `guide`, `example`, `product` |
-| 11.x | [Step-by-Step Product Feature](#step-by-step-adding-a-new-product-feature) | L1783-2196 | `complete example`, `full feature` |
-| 12 | [Pattern Examples](#12-pattern-examples-from-codebase) | L2197-2300 | `examples`, `real code`, `reference` |
-| 12.1 | [Auth Pattern Example](#121-auth-pattern-from-auth_controllergo) | L2199-2267 | `auth example`, `authentication` |
-| 12.2 | [Client Management Example](#122-client-management-pattern-from-client_controllergo) | L2268-2300 | `client example`, `management` |
-| 13 | [Anti-Patterns to Avoid](#13-anti-patterns-to-avoid) | L2301-2460 | `wrong`, `bad`, `avoid`, `don't` |
-| 13.1 | [Business Logic in Controller](#131--business-logic-in-controller) | L2303-2347 | `controller anti-pattern`, `fat controller` |
-| 13.2 | [Direct DB in Service](#132--direct-database-access-in-service) | L2348-2378 | `service anti-pattern`, `tight coupling` |
-| 13.3 | [Standalone Functions](#133--standalone-controller-functions) | L2379-2413 | `standalone`, `function anti-pattern` |
-| 13.4 | [God Service](#134--god-service-too-many-responsibilities) | L2414-2440 | `god service`, `SRP violation` |
-| 13.5 | [Circular Dependencies](#135--circular-dependencies) | L2441-2460 | `import cycle`, `circular` |
+| # | Section | Keywords |
+|---|---------|----------|
+| 1 | [Overview](#1-overview) | `philosophy`, `goals`, `principles` |
+| 1.1 | [Architecture Philosophy](#11-architecture-philosophy) | `package-by-feature`, `why patterns` |
+| 2 | [Project Architecture](#2-project-architecture) | `modules`, `vertical slice`, `separation` |
+| 2.1 | [Layers Inside a Module](#21-layers-inside-a-module) | `handler`, `service`, `repository`, `model` |
+| 2.2 | [Dependency Flow Rules](#22-dependency-flow-rules) | `dependency`, `direction`, `flow`, `cross-module` |
+| 3 | [Core Design Patterns](#3-core-design-patterns) | `patterns`, `repository`, `module`, `DI` |
+| 3.1 | [Repository Pattern](#31-repository-pattern) | `repository`, `data access`, `injected db` |
+| 3.2 | [Service Layer Pattern](#32-service-layer-pattern) | `service`, `business logic`, `orchestration` |
+| 3.3 | [DTO Pattern](#33-dto-data-transfer-object-pattern) | `DTO`, `request`, `response` |
+| 3.4 | [Constructor / Module Factory Pattern](#34-constructor--module-factory-pattern) | `New`, `constructor`, `module` |
+| 3.5 | [Middleware Pattern](#35-middleware-pattern) | `middleware`, `gin.HandlerFunc`, `auth guard` |
+| 3.6 | [Dependency Injection](#36-dependency-injection-pattern) | `DI`, `consumer-defined interface`, `injection` |
+| 4 | [Directory Structure](#4-directory-structure-standard) | `directory`, `folder`, `structure`, `tree` |
+| 4.1 | [Complete Project Structure](#41-complete-project-structure) | `project tree`, `modular layout` |
+| 4.2 | [Package Organization](#42-package-organization-rules) | `package`, `internal`, `pkg`, `module` |
+| 5 | [Layer Responsibilities](#5-layer-responsibilities) | `responsibilities`, `what`, `where` |
+| 5.1 | [Handler Layer](#51-handler-layer-thin-layer) | `handler`, `thin`, `HTTP`, `validation` |
+| 5.2 | [Service Layer](#52-service-layer-fat-layer) | `service`, `fat`, `business logic` |
+| 5.3 | [Repository Layer](#53-repository-layer-data-layer) | `repository`, `database`, `CRUD`, `GORM` |
+| 6 | [Implementation Patterns](#6-implementation-patterns) | `how to`, `implementation`, `code` |
+| 6.1 | [Handler Pattern](#61-handler-pattern) | `Handler`, `NewHandler`, `methods` |
+| 6.2 | [Service Pattern](#62-service-pattern) | `Service`, `NewService`, `methods` |
+| 6.3 | [Repository Pattern](#63-repository-pattern) | `Repository`, `injected db`, `CRUD` |
+| 6.4 | [Module Wiring Pattern](#64-module-wiring-pattern) | `Module`, `New(db)`, `RegisterRoutes`, `API` |
+| 6.5 | [Response Utility Pattern](#65-response-utility-pattern) | `utils.Ok`, `response`, `standard format` |
+| 7 | [Request Flow Patterns](#7-request-flow-patterns) | `flow`, `request`, `lifecycle`, `pipeline` |
+| 7.1 | [Standard CRUD Flow](#71-standard-crud-flow) | `CRUD`, `create`, `read`, `update`, `delete` |
+| 7.2 | [Authentication Flow](#72-authentication-flow-pattern) | `auth`, `login`, `JWT`, `token` |
+| 7.3 | [Transaction Flow](#73-transaction-flow-pattern) | `transaction`, `Begin()`, `Commit()`, `Rollback()` |
+| 8 | [Data Flow Patterns](#8-data-flow-patterns) | `data`, `transformation`, `mapping` |
+| 8.1 | [Request → Response Transform](#81-request--response-data-transformation) | `transform`, `DTO`, `model`, `mapping` |
+| 8.2 | [DTO vs Model Usage](#82-dto-vs-model-usage) | `when`, `DTO`, `model`, `difference` |
+| 9 | [Error Handling Patterns](#9-error-handling-patterns) | `error`, `handling`, `recovery`, `logging` |
+| 9.1 | [Error Flow](#91-error-flow-pattern) | `error flow`, `propagation` |
+| 9.2 | [Sentinel Errors & APIError Mapping](#92-sentinel-errors--apierror-mapping) | `sentinel error`, `APIError`, `mapping` |
+| 9.3 | [Error Wrapping](#93-error-wrapping-pattern) | `%w`, `fmt.Errorf`, `wrapping` |
+| 10 | [Testing Patterns](#10-testing-patterns) | `test`, `testing`, `fake`, `coverage` |
+| 10.1 | [Service Layer Testing](#101-service-layer-testing-pattern) | `service test`, `fake repo`, `no DB` |
+| 10.2 | [Table-Driven Testing](#102-table-driven-testing-pattern) | `table test`, `subtests`, `t.Run` |
+| 11 | [Feature Implementation Guide](#11-complete-feature-implementation-guide) | `step by step`, `guide`, `new module` |
+| 11.x | [Step-by-Step: New Module](#step-by-step-adding-a-new-module) | `complete example`, `full feature` |
+| 12 | [Pattern Examples](#12-pattern-examples-from-codebase) | `examples`, `real code`, `reference` |
+| 12.1 | [Auth Pattern Example](#121-auth-pattern-from-the-auth-module) | `auth example`, `authentication` |
+| 12.2 | [DataTable Example](#122-datatable-pattern-from-the-example-module) | `datatable`, `server-side` |
+| 13 | [Anti-Patterns to Avoid](#13-anti-patterns-to-avoid) | `wrong`, `bad`, `avoid`, `don't` |
+| 13.1 | [Business Logic in Handler](#131--business-logic-in-handler) | `handler anti-pattern`, `fat handler` |
+| 13.2 | [Direct DB in Service](#132--direct-database-access-in-service) | `service anti-pattern`, `tight coupling` |
+| 13.3 | [Standalone Functions](#133--standalone-handler-functions) | `standalone`, `function anti-pattern` |
+| 13.4 | [God Service](#134--god-service-too-many-responsibilities) | `god service`, `SRP violation` |
+| 13.5 | [Reaching Into Another Module](#135--reaching-into-another-modules-internals) | `import cycle`, `cross-module` |
 
 ### 🎯 Quick Lookups by Task
 
-**Implementing Controllers:**
-- L921-1005: Struct-Based Controller Pattern (CRITICAL)
-- L685-731: Controller Responsibilities
-- L2303-2347: What NOT to do
+**Implementing Handlers (HTTP layer):**
+- [6.1 Handler Pattern](#61-handler-pattern)
+- [5.1 Handler Responsibilities](#51-handler-layer-thin-layer)
+- [13.1 What NOT to do](#131--business-logic-in-handler)
 
 **Implementing Services:**
-- L1006-1040: Struct-Based Service Pattern (CRITICAL)
-- L732-810: Service Responsibilities
-- L2348-2378: What NOT to do
+- [6.2 Service Pattern](#62-service-pattern)
+- [5.2 Service Responsibilities](#52-service-layer-fat-layer)
+- [13.2 What NOT to do](#132--direct-database-access-in-service)
 
 **Implementing Repositories:**
-- L1041-1092: Function-Based Repository Pattern
-- L811-918: Repository Responsibilities
-- L156-227: Repository Pattern Theory
+- [6.3 Repository Pattern](#63-repository-pattern)
+- [5.3 Repository Responsibilities](#53-repository-layer-data-layer)
+- [3.1 Repository Pattern Theory](#31-repository-pattern)
+
+**Wiring a Module:**
+- [6.4 Module Wiring Pattern](#64-module-wiring-pattern)
+- [11 Step-by-Step: New Module](#step-by-step-adding-a-new-module)
 
 **Understanding Flow:**
-- L1176-1268: Standard CRUD Flow
-- L1269-1318: Authentication Flow
-- L1319-1362: Transaction Flow
-
-**Complete Example:**
-- L1783-2196: Step-by-Step Product Feature (Full Implementation)
+- [7.1 Standard CRUD Flow](#71-standard-crud-flow)
+- [7.2 Authentication Flow](#72-authentication-flow-pattern)
+- [7.3 Transaction Flow](#73-transaction-flow-pattern)
 
 ---
 
@@ -131,7 +139,15 @@ After reading `00_AI_CRITICAL_RULES.md`, focus on these sections:
 
 ### 1.1 Architecture Philosophy
 
-This project follows **Clean Architecture** principles with a **Layered Architecture** implementation:
+This project follows a **modular (package-by-feature) architecture**. Each service is one
+deployable (one binary, one container, one Postgres), and the code is organized **by business
+module**, not by technical layer. A module owns its full vertical slice — `handler → service →
+repository → model` — inside a single folder.
+
+The Clean Architecture **principles** (separation of concerns, dependency inversion, dependencies
+pointing inward, testability) are still the law. What changed is *where* those layers live: they
+now sit **together inside one module** rather than being scattered across `internal/app/...` and
+`internal/domain/...` folders.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -139,73 +155,83 @@ This project follows **Clean Architecture** principles with a **Layered Architec
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│         Controllers (Thin Layer)            │  ← HTTP Handlers
-│  • Parse requests                           │
-│  • Call services                            │
-│  • Return responses                         │
+│   internal/modules/<name>/  (one vertical slice)
+│                                             │
+│   handler.go     (Thin Layer)               │  ← HTTP: parse, call service, respond
+│        │                                    │
+│        ▼                                    │
+│   service.go     (Fat Layer)                │  ← Business rules, orchestration, logging
+│        │                                    │
+│        ▼                                    │
+│   repository.go  (Data Layer)               │  ← CRUD on an injected *gorm.DB
+│        │                                    │
+│        ▼                                    │
+│   model.go       (the tables this module owns)
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│         Services (Fat Layer)                │  ← Business Logic
-│  • Business rules                           │
-│  • Validation                               │
-│  • Orchestration                            │
-│  • External API calls                       │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│         Repositories (Data Layer)           │  ← Data Access
-│  • CRUD operations                          │
-│  • Database queries                         │
-│  • Transaction management                   │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│              Database / Models              │  ← Data Storage
+│              Database (Postgres)             │
 └─────────────────────────────────────────────┘
 ```
 
 **Key Principles:**
-1. **Dependency Inversion** - High-level modules don't depend on low-level modules
-2. **Separation of Concerns** - Each layer has ONE responsibility
-3. **Dependency Direction** - Dependencies flow INWARD only
-4. **Testability** - Each layer can be tested independently
+1. **One module = one Go package = one folder** — owned end-to-end without touching others.
+2. **Dependency Inversion** — each layer depends on a *consumer-defined interface*, not a concrete type.
+3. **Separation of Concerns** — each file in the slice has ONE responsibility.
+4. **Dependency Direction** — `handler → service → repository`; never the reverse.
+5. **Cross-module communication** — only through a module's public interface, injected via the constructor.
+6. **Testability** — services and handlers are tested with fakes, no DB required.
+
+> The canonical implementation of every principle above is `internal/modules/example`.
+> `MODULE_GUIDE.md` is the source of truth for the layout.
 
 ---
 
 ## 2. PROJECT ARCHITECTURE
 
-### 2.1 Clean Architecture Layers
+### 2.1 Layers Inside a Module
+
+Within `internal/modules/<name>/`, the layers are co-located files:
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                  PRESENTATION LAYER                  │
-│  • Controllers (HTTP handlers)                       │
-│  • Middlewares (Cross-cutting concerns)             │
-│  • Routers (Route definitions)                       │
-│  • DTOs (Request/Response structures)                │
+│                  PRESENTATION                        │
+│  • handler.go   — HTTP handlers (gin), DTO binding   │
+│  • dto.go       — request/response structures        │
+│  • model.go     — the GORM model(s) the module owns  │
 └──────────────────────────────────────────────────────┘
                          ↓
 ┌──────────────────────────────────────────────────────┐
-│                 APPLICATION LAYER                     │
-│  • Services (Business logic)                         │
-│  • Use Cases (Application workflows)                 │
-│  • Orchestration (Coordinating multiple operations)  │
+│                  APPLICATION                          │
+│  • service.go   — business logic & orchestration     │
+│                   (defines the `repository` it needs)│
 └──────────────────────────────────────────────────────┘
                          ↓
 ┌──────────────────────────────────────────────────────┐
-│                   DOMAIN LAYER                        │
-│  • Models (Domain entities)                          │
-│  • Repositories (Data access interfaces)             │
-│  • Domain logic (Pure business rules)                │
+│                  DATA ACCESS                          │
+│  • repository.go — CRUD on the injected *gorm.DB     │
 └──────────────────────────────────────────────────────┘
-                         ↓
+
+         module.go — wires it all: New(db), Name(),
+         Models(), RegisterRoutes(api), public API()
+```
+
+Cross-cutting infrastructure lives outside the module:
+
+```
 ┌──────────────────────────────────────────────────────┐
-│              INFRASTRUCTURE LAYER                     │
-│  • Database adapters                                 │
-│  • External API clients                              │
-│  • File system access                                │
-│  • Third-party integrations                          │
+│  pkg/                  (the shared "kit-in-waiting")  │
+│  • middleware/  — cors, request_id, request_log,     │
+│                   metrics, rate_limit                 │
+│  • database/    — connect + replica resolver         │
+│  • config/ logger/ metrics/ types/ utils/            │
+└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  internal/bootstrap/   (per-service wiring ONLY)     │
+│  • bootstrap.go — Run(): config→db→modules→migrate   │
+│  • modules.go   — Module interface + buildModules()  │
+│  • server.go    — gin engine + global middleware     │
+│  • swagger.go   — OpenAPI/Swagger UI (debug only)    │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -213,18 +239,37 @@ This project follows **Clean Architecture** principles with a **Layered Architec
 
 **✅ ALLOWED:**
 ```
-Controllers → Services → Repositories → Database
-     ↓            ↓            ↓
-   DTOs       Utils/Enums   Models
+Handler → Service → Repository → Database
+   ↓         ↓           ↓
+  DTO    Utils/Types   Model
+
+internal/bootstrap → internal/modules/*     // wiring knows the concrete modules
+internal/modules/* → pkg/*                  // modules use the shared kit
 ```
 
 **❌ FORBIDDEN:**
 ```
-Services → Controllers      // Services cannot depend on HTTP layer
-Repositories → Services     // Repositories cannot depend on business logic
-Models → Repositories       // Models should be pure data structures
-pkg/enums → internal/*      // Public packages cannot import internal
+Service → Handler            // Services cannot depend on the HTTP layer
+Repository → Service         // Repositories cannot depend on business logic
+Model → Repository           // Models are pure data structures
+pkg/* → internal/*           // The shared kit must NEVER import internal
+moduleA → moduleB's guts     // Never import another module's unexported types
 ```
+
+**🔑 Cardinal cross-module rule:** modules never import each other's internals. A module that
+needs another module receives that module's **public interface** (e.g. `auth.Servicer` via
+`authMod.Auth()`, or the consumer module's own `API`) through its **constructor**, wired in
+`buildModules()`:
+
+```go
+// in internal/bootstrap/modules.go
+authMod := auth.New(db)
+payments := payments.New(db, authMod.Auth())   // auth.Servicer injected
+```
+
+This keeps modules loosely coupled and makes the seam easy to cut later: if a module must become
+its own service, the in-process interface call becomes a network call (REST + HMAC) and nothing
+else changes.
 
 ---
 
@@ -232,73 +277,53 @@ pkg/enums → internal/*      // Public packages cannot import internal
 
 ### 3.1 Repository Pattern
 
-**Purpose:** Abstract data access logic from business logic.
+**Purpose:** Abstract data access from business logic.
 
-**Structure:**
+**Structure:** A repository is a **struct that holds an injected `*gorm.DB`** — no package globals.
+The *interface* the repository satisfies is **defined by the service that consumes it** (see §3.6),
+not by the repository itself.
+
 ```go
-// 1. Define interface in domain layer
-// File: internal/domain/repositories/user_repository.go
-package repositories
-
-type UserRepository interface {
-    Create(user *models.User) error
-    FindByID(id uint) (*models.User, error)
-    FindByEmail(email string) (*models.User, error)
-    Update(user *models.User) error
-    Delete(id uint) error
-    List(page, pageSize int) ([]*models.User, int64, error)
-}
-
-// 2. Implement in infrastructure layer
-// File: internal/adapters/database/user_repo_impl.go (OR just use functions)
-package repositories
+// File: internal/modules/example/repository.go
+package example
 
 import "gorm.io/gorm"
 
-// Option A: Function-based (simpler, used in this project)
-func CreateUser(user *models.User) error {
-    if err := database.DB.Create(user).Error; err != nil {
-        logger.Errorf("failed to create user: %v", err)
-        return err
-    }
-    return nil
-}
-
-func GetUserByID(id uint) (*models.User, error) {
-    var user models.User
-    if err := database.DB.Where("id = ?", id).First(&user).Error; err != nil {
-        logger.Errorf("failed to get user %d: %v", id, err)
-        return nil, err
-    }
-    return &user, nil
-}
-
-// Option B: Struct-based (more complex, better for mocking)
-type userRepoImpl struct {
+// Repository is the data-access layer for the example module.
+// It holds an injected *gorm.DB (no global state) so it is easy to test and reuse.
+type Repository struct {
     db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
-    return &userRepoImpl{db: db}
+// NewRepository creates a Repository bound to the given connection.
+func NewRepository(db *gorm.DB) *Repository {
+    return &Repository{db: db}
 }
 
-func (r *userRepoImpl) Create(user *models.User) error {
-    return r.db.Create(user).Error
+// List returns all example records.
+func (r *Repository) List() ([]*Example, error) {
+    var list []*Example
+    if err := r.db.Find(&list).Error; err != nil {
+        return nil, err
+    }
+    return list, nil
 }
 ```
 
 **✅ DO:**
-- Keep repositories focused on data access ONLY
-- Use GORM or parameterized queries (never string concatenation)
-- Return domain models, not DTOs
-- Handle database-specific errors here
-- Use transactions for multi-step operations
+- Hold the injected `*gorm.DB` on the struct (`NewRepository(db)`); never reach for a global.
+- Keep repositories focused on data access ONLY.
+- Use GORM or parameterized queries (never string concatenation).
+- Return the module's own models, not DTOs.
+- Translate database-specific errors here (e.g. `gorm.ErrRecordNotFound` → `nil, nil`).
+- Use transactions for multi-step operations.
 
 **❌ DON'T:**
-- Put business logic in repositories
-- Call other repositories directly
-- Import service layer packages
-- Transform data for API responses (that's DTOs job)
+- Use the package-level `database.DB` global (it exists only for the connection lifecycle/tests).
+- Put business logic in repositories.
+- Call another module's repository directly.
+- Import the service layer.
+- Transform data for API responses (that is the DTO's job).
 
 ---
 
@@ -306,288 +331,231 @@ func (r *userRepoImpl) Create(user *models.User) error {
 
 **Purpose:** Encapsulate business logic and orchestrate operations.
 
-**Structure:**
+**Structure:** A service holds a **consumer-defined `repository` interface** (declared in
+`service.go` itself, see §3.6). It logs each operation with `logger.LogStart`/`LogFinish` and
+propagates the request-scoped `context.Context`.
+
 ```go
-// File: internal/app/services/user_service.go
-package services
+// File: internal/modules/example/service.go
+package example
 
-type UserService struct {
-    // Dependencies injected via constructor
+import (
+    "context"
+
+    "github.com/0xdiaz/gin-boilerplate/pkg/logger"
+)
+
+// repository is the data-access contract this service needs.
+// Defining it HERE (at the consumer) keeps the service testable with fakes.
+type repository interface {
+    List() ([]*Example, error)
 }
 
-func NewUserService() *UserService {
-    return &UserService{}
+// Service holds the example module's business logic.
+type Service struct {
+    repo repository
 }
 
-// Public methods implement business operations
-func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
-    // 1. Validate business rules
-    if err := s.validateUser(req); err != nil {
-        return fmt.Errorf("validation failed: %w", err)
-    }
-
-    // 2. Check business constraints
-    existing, _ := repositories.GetUserByEmail(req.Email)
-    if existing != nil {
-        return fmt.Errorf("email already exists")
-    }
-
-    // 3. Hash password
-    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-    if err != nil {
-        return fmt.Errorf("failed to hash password: %w", err)
-    }
-
-    // 4. Build domain model
-    user := &models.User{
-        Name:     req.Name,
-        Email:    req.Email,
-        Password: string(hashedPassword),
-    }
-
-    // 5. Save via repository
-    if err := repositories.CreateUser(user); err != nil {
-        logger.Errorf("failed to create user: %v", err)
-        return fmt.Errorf("failed to create user: %w", err)
-    }
-
-    logger.Infof("User created successfully: %s", user.Email)
-    return nil
+// NewService creates a Service backed by the given repository.
+func NewService(repo repository) *Service {
+    return &Service{repo: repo}
 }
 
-// Private helper methods
-func (s *UserService) validateUser(req *dto.CreateUserRequest) error {
-    // Validation logic
-    return nil
+// List returns all example records.
+func (s *Service) List(ctx context.Context) ([]*Example, error) {
+    ctx, start := logger.LogStart(ctx, "example.Service.List")
+    list, err := s.repo.List()
+    logger.LogFinish(ctx, "example.Service.List", err, start)
+    return list, err
 }
 ```
 
 **✅ DO:**
-- Implement ALL business logic here
-- Validate input according to business rules
-- Orchestrate multiple repository calls
-- Handle external API calls
-- Transform data between layers
-- Log important business events
+- Implement ALL business logic and rules here.
+- Define the `repository` interface this service needs *in this file* (dependency inversion).
+- Accept and propagate `context.Context` as the first argument.
+- Wrap each operation in `logger.LogStart` / `logger.LogFinish` for tracing.
+- Validate business constraints and orchestrate multiple repository calls.
+- Return module-defined sentinel errors (e.g. `ErrInvalidCredentials`) for known conditions.
 
 **❌ DON'T:**
-- Handle HTTP concerns (gin.Context, HTTP status codes)
-- Access database directly (use repositories)
-- Import controller packages
-- Return HTTP responses
+- Handle HTTP concerns (`gin.Context`, status codes) — except where a repository helper such as
+  DataTables genuinely needs `*gin.Context` for server-side paging.
+- Access the database directly (go through the repository).
+- Import the handler layer.
+- Return HTTP responses.
 
 ---
 
 ### 3.3 DTO (Data Transfer Object) Pattern
 
-**Purpose:** Define contracts for API requests/responses, prevent tight coupling.
+**Purpose:** Define contracts for API requests/responses and prevent tight coupling.
 
-**Structure:**
+**Structure:** DTOs live in `internal/modules/<name>/dto.go` (the file is optional; small modules
+may keep request/response types alongside the model). They are pure data structures with binding tags.
+
 ```go
-// File: internal/app/dto/user_dto.go
-package dto
+// File: internal/modules/auth/dto.go
+package auth
 
-// CreateUserRequest represents user registration payload
-type CreateUserRequest struct {
-    // Name is the full name of the user
-    Name string `json:"name" binding:"required,min=3,max=255"`
-
-    // Email must be unique (validated at service layer)
-    Email string `json:"email" binding:"required,email"`
-
-    // Password will be hashed before storage
+// RegisterRequest represents the payload for user registration.
+type RegisterRequest struct {
+    Name     string `json:"name" binding:"required,min=3,max=255"`
+    Email    string `json:"email" binding:"required,email"`
     Password string `json:"password" binding:"required,min=8"`
-
-    // RoleID references the role table
-    RoleID uint `json:"role_id" binding:"required"`
 }
 
-// UserResponse represents user data returned to client
+// AuthResponse represents the response after successful authentication.
+type AuthResponse struct {
+    User         UserResponse `json:"user"`
+    AccessToken  string       `json:"access_token"`
+    RefreshToken string       `json:"refresh_token"`
+    TokenType    string       `json:"token_type"`
+}
+
+// UserResponse represents user information in API responses (never includes password).
 type UserResponse struct {
-    ID        uint      `json:"id"`
-    Name      string    `json:"name"`
-    Email     string    `json:"email"`
-    RoleID    uint      `json:"role_id"`
-    Role      string    `json:"role"`
-    CreatedAt time.Time `json:"created_at"`
-}
-
-// UpdateUserRequest represents user update payload
-type UpdateUserRequest struct {
-    Name  string `json:"name" binding:"omitempty,min=3,max=255"`
-    Email string `json:"email" binding:"omitempty,email"`
-}
-
-// ListUsersResponse represents paginated user list
-type ListUsersResponse struct {
-    Users      []UserResponse `json:"users"`
-    Page       int            `json:"page"`
-    PageSize   int            `json:"page_size"`
-    Total      int64          `json:"total"`
-    TotalPages int            `json:"total_pages"`
+    ID    uint   `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 ```
 
 **✅ DO:**
-- Define separate DTOs for Request and Response
-- Use struct tags for validation (`binding:`, `validate:`)
-- Add comments explaining each field
-- Keep DTOs in `internal/app/dto/` directory
-- Use DTOs only for API layer (not internal logic)
+- Define separate DTOs for Request and Response.
+- Use struct tags for validation (`binding:"required,email"`, …).
+- Keep DTOs in the owning module (`dto.go`), never in a shared `dto` package.
+- Exclude sensitive fields from responses (e.g. the auth `User` model tags `Password` as `json:"-"`).
 
 **❌ DON'T:**
-- Expose database models directly via API
-- Add business logic to DTOs (they're pure data structures)
-- Reuse request DTOs as response DTOs
-- Put DTOs in service or repository packages
+- Expose database models directly via API when they carry secrets.
+- Add business logic to DTOs.
+- Reuse a request DTO as a response DTO.
+- Put DTOs in another module's package.
 
 ---
 
-### 3.4 Factory Pattern
+### 3.4 Constructor / Module Factory Pattern
 
-**Purpose:** Centralize object creation and initialization.
+**Purpose:** Centralize object creation and wire a module's slice together.
 
-**Structure:**
+**Structure:** Every layer has a `New*` constructor that takes its dependencies. The module's
+`New(db)` is the single factory that assembles repository → service → handler.
+
 ```go
-// Constructor pattern for services
-func NewUserService() *UserService {
-    return &UserService{
-        // Initialize with dependencies
-    }
-}
+// File: internal/modules/example/module.go
+package example
 
-// Constructor pattern for controllers
-func NewUserController(service *UserService) *UserController {
-    return &UserController{
-        service: service,
-    }
-}
+import "gorm.io/gorm"
 
-// Constructor pattern for repositories (if using struct-based)
-func NewUserRepository(db *gorm.DB) UserRepository {
-    return &userRepoImpl{
-        db: db,
-    }
+// New builds the module from an injected DB connection.
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))     // repo → service
+    return &Module{svc: svc, handler: NewHandler(svc)} // service → handler
 }
 ```
 
 **✅ DO:**
-- Use `New*` functions for all constructors
-- Initialize dependencies via constructor
-- Return concrete types (not interfaces) from controllers/services
-- Return interfaces from repository constructors (for mocking)
+- Use `New*` functions for all constructors; pass dependencies in.
+- Assemble the slice exactly once in `Module.New(db)`.
+- Return concrete types from `New(db)` (the `*Module`); expose the public surface via `Module.API()`.
 
 **❌ DON'T:**
-- Create objects with `&Struct{}` directly in business logic
-- Use `init()` functions for dependency initialization
-- Create global instances
+- Build objects with `&Struct{}` directly in business logic.
+- Use `init()` functions for dependency initialization.
+- Create global singletons for module state.
 
 ---
 
 ### 3.5 Middleware Pattern
 
-**Purpose:** Handle cross-cutting concerns (auth, logging, etc.).
+**Purpose:** Handle cross-cutting concerns (CORS, request IDs, logging, metrics, rate limiting, auth).
 
-**Structure:**
+**Two kinds of middleware:**
+
+1. **Generic middleware lives in `pkg/middleware/`** and is applied globally in
+   `internal/bootstrap/server.go`:
+   - `middleware.CORSMiddleware()`
+   - `middleware.RequestIDMiddleware()` — flows a request ID into the context
+   - `middleware.RequestLogMiddleware()`
+   - `middleware.MetricsMiddleware()`
+   - `middleware.RateLimitMiddleware()` / `middleware.RateLimitMiddlewareWithConfig(rps, burst)`
+     — per **client IP**, applied to all of `/api/v1`.
+
+2. **The JWT auth guard is NOT in `pkg/middleware`.** It lives **inside the auth module** and is
+   exposed via `auth.Module.Middleware()`. A module that needs authentication takes the guard from
+   the auth module rather than implementing its own.
+
 ```go
-// File: internal/app/middlewares/auth_middleware.go
-package middlewares
-
-func AuthMiddleware() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        // 1. Extract token
-        token := c.GetHeader("Authorization")
-        if token == "" {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing token"})
-            c.Abort()
-            return
-        }
-
-        // 2. Validate token
-        claims, err := utils.ValidateJWT(token)
-        if err != nil {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-            c.Abort()
-            return
-        }
-
-        // 3. Set user context
-        c.Set("user_id", claims.UserID)
-        c.Set("email", claims.Email)
-
-        // 4. Continue to next handler
-        c.Next()
-    }
+// The auth module owns its guard (internal/modules/auth/middleware.go) and
+// exposes it (internal/modules/auth/module.go):
+func (m *Module) Middleware() gin.HandlerFunc {
+    return authMiddleware(m.svc) // validates Bearer JWT, sets "user_id" in the context
 }
 
-// Usage in router
-route.Use(middlewares.AuthMiddleware())
-route.GET("/api/users", controllers.ListUsers)
+// Protected routes inside the auth module:
+protected := api.Group("")
+protected.Use(m.Middleware())
+protected.GET("/profile", m.handler.Profile)
 ```
 
-**Common Middleware Types:**
-- **Authentication** - Verify JWT tokens
-- **Authorization** - Check user permissions
-- **Rate Limiting** - Prevent abuse
-- **Logging** - Log requests/responses
-- **CORS** - Handle cross-origin requests
-- **Recovery** - Catch panics
-- **Validation** - Validate requests
-- **IP Whitelist** - Restrict access by IP
+```go
+// Generic middleware is mounted globally in internal/bootstrap/server.go:
+r.Use(gin.Recovery())
+r.Use(middleware.CORSMiddleware())
+r.Use(middleware.RequestIDMiddleware())
+r.Use(middleware.RequestLogMiddleware())
+r.Use(middleware.MetricsMiddleware())
+
+v1 := r.Group("/api/v1")
+v1.Use(middleware.RateLimitMiddleware()) // per-IP rate limit on all business routes
+```
+
+> **Note:** trusted-proxy handling is configuration, not middleware. `server.go` calls
+> `r.SetTrustedProxies(cfg.Server.TrustedProxies)` (the `TRUSTED_PROXIES` env). Empty = trust none,
+> so `c.ClientIP()` uses the real peer address and `X-Forwarded-For` cannot be spoofed.
 
 ---
 
 ### 3.6 Dependency Injection Pattern
 
-**Purpose:** Decouple components and improve testability.
+**Purpose:** Decouple components and make every layer testable in isolation.
 
-**Structure:**
+The cornerstone is the **consumer-defined interface**: the layer that *uses* a dependency declares
+the (usually unexported) interface it needs, in its own file. The concrete implementation satisfies
+that interface implicitly. Wiring happens in `module.go`.
+
 ```go
-// 1. Define dependencies in struct
-type UserService struct {
-    userRepo    repositories.UserRepository
-    emailClient *EmailClient
-    logger      *Logger
+// 1. The handler declares the `service` interface it needs (handler.go):
+type service interface {
+    List(ctx context.Context) ([]*Example, error)
 }
+type Handler struct{ svc service }
+func NewHandler(svc service) *Handler { return &Handler{svc: svc} }
 
-// 2. Inject via constructor
-func NewUserService(
-    userRepo repositories.UserRepository,
-    emailClient *EmailClient,
-    logger *Logger,
-) *UserService {
-    return &UserService{
-        userRepo:    userRepo,
-        emailClient: emailClient,
-        logger:      logger,
-    }
+// 2. The service declares the `repository` interface it needs (service.go):
+type repository interface {
+    List() ([]*Example, error)
 }
+type Service struct{ repo repository }
+func NewService(repo repository) *Service { return &Service{repo: repo} }
 
-// 3. Use in router registration
-func RegisterRoutes(router *gin.Engine) {
-    // Initialize dependencies
-    db := database.GetDB()
-    userRepo := repositories.NewUserRepository(db)
-    emailClient := NewEmailClient()
-    logger := logger.NewLogger()
-
-    // Inject into service
-    userService := services.NewUserService(userRepo, emailClient, logger)
-
-    // Inject into controller
-    userController := controllers.NewUserController(userService)
-
-    // Register routes
-    router.GET("/api/users", userController.List)
-    router.POST("/api/users", userController.Create)
+// 3. module.go wires the concrete chain (repo → service → handler):
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))
+    return &Module{svc: svc, handler: NewHandler(svc)}
 }
 ```
 
+> The auth module shows the *exported* variant: it publishes a `Servicer` interface
+> (`internal/modules/auth/servicer.go`) so its handler, middleware, **and other modules** can all
+> depend on the contract rather than the concrete `*Service`.
+
 **✅ Benefits:**
-- Easy to test (inject mocks)
-- Easy to change implementations
-- Clear dependencies
-- No global state
+- Easy to test (inject a fake) — see `example/service_test.go`.
+- The interface lists exactly what the consumer uses, nothing more.
+- No global state; dependencies are explicit in the constructor.
+- Cross-module seams are clean and can later become network calls.
 
 ---
 
@@ -595,173 +563,110 @@ func RegisterRoutes(router *gin.Engine) {
 
 ### 4.1 Complete Project Structure
 
+> Mirrors `MODULE_GUIDE.md` — that file is the source of truth.
+
 ```
-project-name/
+gin-boilerplate/
 │
-├── cmd/                                # Application entry points
-│   ├── migrate/                        # Database migration tool
-│   │   └── main.go
-│   └── seeder/                         # Database seeder tool
-│       └── seeder.go
+├── main.go                          # 3 lines: bootstrap.Run()
 │
-├── internal/                           # Private application code
+├── internal/                        # Private application code
 │   │
-│   ├── adapters/                       # External adapters
-│   │   └── database/                   # Database adapter
-│   │       ├── db.go                   # Connection management
-│   │       ├── migrations/             # SQL migration files
-│   │       │   ├── 001_create_users.sql
-│   │       │   └── 002_create_clients.sql
-│   │       └── seeders/                # Seed data
-│   │           └── users_seeder.go
+│   ├── bootstrap/                   # The ONLY per-service wiring
+│   │   ├── bootstrap.go             #   Run(): config → db → modules → migrate → serve → shutdown
+│   │   ├── modules.go               #   Module interface + buildModules() (the module list)
+│   │   ├── server.go                #   gin engine + global middleware + route mounting
+│   │   └── swagger.go               #   OpenAPI/Swagger UI (debug only)
 │   │
-│   ├── app/                            # Application layer
-│   │   │
-│   │   ├── controllers/                # HTTP handlers (thin)
-│   │   │   ├── auth/                   # Auth controller (grouped)
-│   │   │   │   └── auth_controller.go
-│   │   │   ├── user_controller.go      # User CRUD
-│   │   │   ├── client_controller.go    # Client CRUD
-│   │   │   └── transaction_controller.go
-│   │   │
-│   │   ├── dto/                        # Data Transfer Objects
-│   │   │   ├── auth_dto.go             # Auth requests/responses
-│   │   │   ├── user_dto.go             # User requests/responses
-│   │   │   ├── client_dto.go           # Client requests/responses
-│   │   │   └── transaction_dto.go
-│   │   │
-│   │   ├── middlewares/                # HTTP middlewares
-│   │   │   ├── auth_middleware.go      # JWT authentication
-│   │   │   ├── rate_limit_middleware.go
-│   │   │   ├── ip_whitelist_middleware.go
-│   │   │   ├── activity_logger_middleware.go
-│   │   │   ├── cors_middleware.go
-│   │   │   └── recovery_middleware.go
-│   │   │
-│   │   ├── routers/                    # Route definitions
-│   │   │   └── index.go                # Main router
-│   │   │
-│   │   └── services/                   # Business logic (fat)
-│   │       ├── auth_service.go         # Authentication logic
-│   │       ├── user_service.go         # User business logic
-│   │       ├── order_service.go        # Order processing logic
-│   │       ├── email_service.go        # Email sending
-│   │       ├── payment_service.go      # Payment processing
-│   │       └── notification_service.go # Push notifications
+│   ├── migrations/                  # Service-specific schema
+│   │   ├── migration.go             #   Run(db, models) — AutoMigrate
+│   │   └── sql/                     #   versioned SQL (production path)
 │   │
-│   └── domain/                         # Domain layer
+│   └── modules/                     # ← business modules (work happens here)
 │       │
-│       ├── models/                     # Database entities
-│       │   ├── user.go                 # User model
-│       │   ├── client.go               # Client model
-│       │   ├── transaction.go          # Transaction model
-│       │   ├── role.go                 # Role model
-│       │   └── otp_session.go          # OTP session model
+│       ├── example/                 #   THE reference module — copy this to make a new one
+│       │   ├── model.go             #     GORM model(s) the module owns
+│       │   ├── dto.go               #     request/response types (optional)
+│       │   ├── repository.go        #     data access (holds *gorm.DB, no globals)
+│       │   ├── service.go           #     business logic (defines the repo interface it needs)
+│       │   ├── handler.go           #     HTTP layer (defines the service interface it needs)
+│       │   ├── module.go            #     New(db), Name(), Models(), RegisterRoutes(), public API()
+│       │   └── service_test.go      #     co-located test (no DB — uses a fake repo)
 │       │
-│       └── repositories/               # Data access layer
-│           ├── auth_repo.go            # Auth-specific queries
-│           ├── user_repo.go            # User CRUD operations
-│           ├── client_repo.go          # Client CRUD operations
-│           └── transaction_repo.go     # Transaction CRUD operations
+│       ├── auth/                    #   real module: JWT auth, exposes Middleware() and Auth()
+│       │   ├── model.go  dto.go  repository.go
+│       │   ├── service.go  service_tokens.go  servicer.go
+│       │   ├── handler.go  middleware.go  mailer.go
+│       │   └── module.go
+│       │
+│       └── health/                  #   system module: mounts /health, /metrics at ROOT
+│           ├── service.go  handler.go  dto.go
+│           └── module.go
 │
-├── pkg/                                # Public reusable packages
-│   ├── config/                         # Configuration loader
-│   │   └── config.go
-│   │
-│   ├── datatable/                      # DataTable utilities
-│   │   └── datatable.go
-│   │
-│   ├── enums/                          # Constants and enums
-│   │   ├── roles.go                    # Role constants
-│   │   ├── statuses.go                 # Status constants
-│   │   └── providers.go                # Provider constants
-│   │
-│   ├── logger/                         # Logging utilities
-│   │   └── logger.go
-│   │
-│   ├── types/                          # Shared types
-│   │   ├── errors.go                   # Custom error types
-│   │   └── common.go                   # Common types
-│   │
-│   └── utils/                          # Helper functions
-│       ├── jwt.go                      # JWT utilities
-│       ├── hash.go                     # Password hashing
-│       ├── response.go                 # HTTP response helpers
-│       └── validation.go               # Validation helpers
+├── pkg/                             # Public reusable kit — must NEVER import internal/
+│   ├── config/                      # Configuration loader
+│   ├── logger/                      # Logging + LogStart/LogFinish tracing helpers
+│   ├── metrics/                     # Request counters, uptime
+│   ├── types/                       # SuccessResponse, ErrorResponse, APIError
+│   ├── utils/                       # Response helpers (Ok, BadRequest, RespondWithAPIError, …)
+│   ├── middleware/                  # cors, request_id, request_log, metrics, rate_limit
+│   └── database/                    # DbConnection(master, replica), GetDB(), package global DB
 │
-├── docs/                               # Documentation
-│   ├── DESIGN_PATTERNS.md              # This file
-│   ├── CODING_STANDARDS.md             # Coding standards
-│   ├── AI_AGENT_RULES.md               # AI agent rules
-│   └── API_DOCUMENTATION.md            # API docs
+├── api/                             # Embedded OpenAPI spec (served by swagger.go)
+├── docs/                            # Documentation
+│   ├── MODULE_GUIDE.md              # ← source of truth for the layout
+│   ├── DESIGN_PATTERNS.md           # This file
+│   ├── CODING_STANDARDS.md
+│   ├── AI_AGENT_RULES.md
+│   └── ...
 │
-├── tests/                              # Test files
-│   ├── unit/                           # Unit tests
-│   ├── integration/                    # Integration tests
-│   └── fixtures/                       # Test data
+├── tests/                           # Cross-cutting tests & helpers
+│   ├── unit/                        # Unit tests
+│   ├── integration/                 # Integration tests
+│   ├── mocks/                       # Shared mocks (legacy; new modules prefer in-package fakes)
+│   └── fixtures/                    # Test data
 │
-├── .env.example                        # Environment template
-├── .env                                # Local environment (gitignored)
-├── .gitignore                          # Git ignore rules
-├── docker-compose-dev.yml              # Docker dev config
-├── docker-compose-prod.yml             # Docker prod config
-├── Dockerfile                          # Docker image
-├── go.mod                              # Go dependencies
-├── go.sum                              # Dependency checksums
-├── main.go                             # Application entry point
-├── Makefile                            # Build automation
-└── README.md                           # Project documentation
+├── scripts/                         # Dev/ops scripts
+├── go.mod                           # Module path: github.com/0xdiaz/gin-boilerplate
+├── go.sum
+├── Makefile                         # `make test` → ./tests/unit/... ./internal/... ./pkg/...
+└── README.md
 ```
+
+> **Module path note:** this boilerplate uses
+> `github.com/0xdiaz/gin-boilerplate`. Each stamped service should set its own path in `go.mod`
+> (e.g. `github.com/your-org/your-service`) and update imports — a one-shot find/replace verified
+> with `go build ./...`.
 
 ### 4.2 Package Organization Rules
 
 **✅ RULES:**
 
-1. **One package per directory**
+1. **One module = one Go package = one folder.**
    ```
-   ✅ internal/app/services/   → package services
-   ❌ internal/app/           → package users, package clients (multiple packages)
-   ```
-
-2. **Group multi-file controllers/services into a feature folder**
-   ```
-   ✅ CORRECT:
-   internal/app/controllers/auth/
-       ├── auth_controller.go
-       ├── auth_controller_handlers.go
-       └── auth_controller_validators.go
-
-   internal/app/services/user/
-       ├── user_service.go
-       └── user_service_rules.go
-
-   ❌ WRONG:
-   internal/app/controllers/
-       ├── auth_controller.go
-       ├── auth_controller_handlers.go
-       └── user_controller.go            // Mixed features at the same directory level
+   ✅ internal/modules/example/   → package example  (handler, service, repository, model, module)
+   ❌ internal/modules/           → multiple feature packages mixed at one level
    ```
 
-2. **Package naming:**
-   - Lowercase, single word
-   - No underscores, no dashes
-   - Plural for collections: `services`, `controllers`, `repositories`
-   - Singular for utilities: `logger`, `config`, `utils`
+2. **A module owns its tables.** Declare them in `Module.Models()`. No cross-module foreign keys;
+   no reaching into another module's tables.
 
-3. **Import paths:**
-   ```go
-   import (
-       "github.com/your-org/project-name/internal/app/services"
-       "github.com/your-org/project-name/internal/domain/models"
-       "github.com/your-org/project-name/pkg/utils"
-   )
-   ```
+3. **`pkg/` is the shared kit.** It must never import from `internal/`. Anything you want identical
+   across sibling services goes here.
 
-4. **Grouping imports:**
+4. **`internal/bootstrap/` is the only place that knows the concrete module list.** Adding a module
+   is one line in `buildModules()`.
+
+5. **Package naming:**
+   - Lowercase, single word, no underscores or dashes.
+   - Module packages are singular feature names: `example`, `auth`, `health`.
+   - Utility packages are singular: `logger`, `config`, `utils`, `middleware`.
+
+6. **Grouping imports:**
    ```go
    import (
        // Standard library
-       "fmt"
+       "context"
        "time"
 
        // External dependencies
@@ -769,8 +674,8 @@ project-name/
        "gorm.io/gorm"
 
        // Internal packages
-       "github.com/your-org/project-name/internal/app/dto"
-       "github.com/your-org/project-name/pkg/utils"
+       "github.com/0xdiaz/gin-boilerplate/pkg/logger"
+       "github.com/0xdiaz/gin-boilerplate/pkg/utils"
    )
    ```
 
@@ -778,50 +683,47 @@ project-name/
 
 ## 5. LAYER RESPONSIBILITIES
 
-### 5.1 Controller Layer (Thin Layer)
+### 5.1 Handler Layer (Thin Layer)
 
 **Responsibility:** Handle HTTP concerns ONLY.
 
-**What Controllers SHOULD Do:**
+**What handlers SHOULD do:**
 ```go
-func (ctrl *UserController) Create(c *gin.Context) {
-    // 1. Parse and bind request
-    var req dto.CreateUserRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
+// File: internal/modules/example/handler.go
+func (h *Handler) List(c *gin.Context) {
+    // 1. Open a trace span from the request context
+    ctx, start := logger.LogStart(c.Request.Context(), "example.Handler.List")
+
+    // 2. Call the service
+    data, err := h.svc.List(ctx)
+    if err != nil {
+        logger.LogFinish(ctx, "example.Handler.List", err, start)
+        utils.InternalServerError(c, err, "Failed to retrieve data")
         return
     }
 
-    // 2. Call service
-    if err := ctrl.service.CreateUser(&req); err != nil {
-        utils.InternalServerError(c, err, "Failed to create user")
-        return
-    }
-
-    // 3. Return response
-    utils.Created(c, nil, "User created successfully")
+    // 3. Respond with a response utility
+    logger.LogFinish(ctx, "example.Handler.List", nil, start)
+    utils.Ok(c, data, "Data retrieved successfully")
 }
 ```
 
-**✅ Controllers SHOULD:**
-- Parse request parameters (URL params, query params, body)
-- Validate request format (binding, JSON parsing)
-- Call service methods
-- Format HTTP responses
-- Handle HTTP status codes
-- Use response utility functions (`utils.Ok`, `utils.BadRequest`, etc.)
+**✅ Handlers SHOULD:**
+- Bind request data (`c.ShouldBindJSON`, params, query).
+- Open/close a trace span (`logger.LogStart` / `logger.LogFinish`).
+- Call the service through the consumer-defined `service` interface.
+- Map known sentinel errors to HTTP via `utils.RespondWithAPIError` (see §9.2).
+- Use response utilities (`utils.Ok`, `utils.BadRequest`, `utils.Created`, …).
 
-**❌ Controllers MUST NOT:**
-- Contain business logic
-- Access database directly
-- Transform business data
-- Call repositories directly
-- Have functions >50 lines
-- Import repository packages
+**❌ Handlers MUST NOT:**
+- Contain business logic.
+- Access the database or call repositories directly.
+- Write `c.JSON(...)` by hand for API responses.
+- Import another module's internals.
 
 **Size Limits:**
-- **Maximum 50 lines** per controller function
-- **Maximum 300 lines** per controller file
+- **Maximum 50 lines** per handler method.
+- **Maximum 300 lines** per `handler.go` file (split helpers out if larger).
 
 ---
 
@@ -829,438 +731,396 @@ func (ctrl *UserController) Create(c *gin.Context) {
 
 **Responsibility:** Implement ALL business logic.
 
-**What Services SHOULD Do:**
+**What services SHOULD do:**
 ```go
-func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
-    // 1. Business validation
-    if err := s.validateBusinessRules(req); err != nil {
-        return fmt.Errorf("validation failed: %w", err)
-    }
+// File: internal/modules/auth/service.go (abridged)
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+    ctx, start := logger.LogStart(ctx, "auth.Service.Register")
 
-    // 2. Check business constraints
-    existing, _ := repositories.GetUserByEmail(req.Email)
-    if existing != nil {
-        return fmt.Errorf("email already exists")
-    }
-
-    // 3. Apply business logic
-    hashedPassword, err := bcrypt.GenerateFromPassword(
-        []byte(req.Password),
-        bcrypt.DefaultCost,
-    )
+    // 1. Business constraint: email must be unique
+    existing, err := s.userRepo.GetUserByEmail(req.Email)
     if err != nil {
-        return fmt.Errorf("failed to hash password: %w", err)
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to check email: %w", err)
+    }
+    if existing != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", ErrEmailAlreadyExists, start)
+        return nil, ErrEmailAlreadyExists // sentinel error
     }
 
-    // 4. Build domain model
-    user := &models.User{
-        Name:     req.Name,
-        Email:    req.Email,
-        Password: string(hashedPassword),
-        RoleID:   req.RoleID,
+    // 2. Apply business logic (hash password, build model)
+    hashed, err := s.hashPassword(req.Password)
+    if err != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to process password: %w", err)
+    }
+    user := &User{Name: req.Name, Email: req.Email, Password: hashed}
+
+    // 3. Orchestrate repository calls
+    if err = s.userRepo.CreateUser(user); err != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to create user: %w", err)
     }
 
-    // 5. Orchestrate repository calls
-    if err := repositories.CreateUser(user); err != nil {
-        logger.Errorf("failed to create user: %v", err)
-        return fmt.Errorf("failed to create user: %w", err)
-    }
-
-    // 6. Trigger side effects (emails, webhooks, etc.)
-    go s.sendWelcomeEmail(user.Email)
-
-    // 7. Log business events
-    logger.Infof("User created: ID=%d, Email=%s", user.ID, user.Email)
-
-    return nil
+    // 4. Build response, log the business event
+    logger.Infof("user registered successfully: %s", user.Email)
+    logger.LogFinish(ctx, "auth.Service.Register", nil, start)
+    return &AuthResponse{ /* ... */ }, nil
 }
 ```
 
 **✅ Services SHOULD:**
-- Implement ALL business logic and rules
-- Validate business constraints
-- Orchestrate multiple repository calls
-- Call external APIs
-- Transform data between layers
-- Handle business errors gracefully
-- Log important business events
-- Trigger side effects (emails, webhooks, notifications)
-- Use transactions for multi-step operations
+- Implement ALL business logic and rules.
+- Accept and propagate `context.Context`.
+- Wrap operations in `logger.LogStart` / `logger.LogFinish`.
+- Orchestrate multiple repository calls; call external services through injected interfaces.
+- Return module sentinel errors for known conditions, wrap unexpected errors with `%w`.
 
 **❌ Services MUST NOT:**
-- Handle HTTP concerns (`gin.Context`, status codes)
-- Access database directly (use repositories)
-- Import controller packages
-- Return HTTP responses
-- Have knowledge of request/response formats
+- Handle HTTP status codes or write responses.
+- Access the database directly (use the repository).
+- Import the handler layer.
 
 **Size Limits:**
-- **Maximum 100 lines** per service function
-- **Maximum 400 lines** per service file
-- If exceeding, split into multiple files:
-  - `user_service.go` - main logic
-  - `user_service_helpers.go` - helper functions
-  - `user_service_validators.go` - validation logic
+- **Maximum 100 lines** per service method.
+- **Maximum 400 lines** per service file; split into `service.go`, `service_<topic>.go`
+  (the auth module splits token logic into `service_tokens.go`).
 
 ---
 
 ### 5.3 Repository Layer (Data Layer)
 
-**Responsibility:** Handle data persistence ONLY.
+**Responsibility:** Handle data persistence ONLY, against the **injected** `*gorm.DB`.
 
-**What Repositories SHOULD Do:**
+**What repositories SHOULD do:**
 ```go
-// CRUD operations
-func CreateUser(user *models.User) error {
-    if err := database.DB.Create(user).Error; err != nil {
+// File: internal/modules/auth/repository.go (abridged)
+type repository struct {
+    db *gorm.DB
+}
+
+func NewRepository(db *gorm.DB) Repository {
+    return &repository{db: db}
+}
+
+func (r *repository) CreateUser(user *User) error {
+    if err := r.db.Create(user).Error; err != nil {
         logger.Errorf("failed to create user: %v", err)
-        return err
+        return fmt.Errorf("failed to create user: %w", err)
     }
     return nil
 }
 
-func GetUserByID(id uint) (*models.User, error) {
-    var user models.User
-    if err := database.DB.Where("id = ?", id).
-        Preload("UserRoles.Role").
-        Preload("UserRoles.Client").
-        First(&user).Error; err != nil {
-        logger.Errorf("failed to get user %d: %v", id, err)
-        return nil, err
+func (r *repository) GetUserByEmail(email string) (*User, error) {
+    var user User
+    err := r.db.Where("email = ?", email).First(&user).Error
+    if err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, nil // not found is not an error here
+        }
+        return nil, fmt.Errorf("failed to get user by email: %w", err)
     }
     return &user, nil
 }
-
-func UpdateUser(user *models.User) error {
-    if err := database.DB.Save(user).Error; err != nil {
-        logger.Errorf("failed to update user: %v", err)
-        return err
-    }
-    return nil
-}
-
-// Complex queries with optimization
-func ListUsers(page, pageSize int) ([]*models.User, int64, error) {
-    var users []*models.User
-    var total int64
-
-    // Count total
-    database.DB.Model(&models.User{}).Count(&total)
-
-    // Get paginated results
-    offset := (page - 1) * pageSize
-    if err := database.DB.
-        Preload("UserRoles.Role").
-        Offset(offset).
-        Limit(pageSize).
-        Find(&users).Error; err != nil {
-        return nil, 0, err
-    }
-
-    return users, total, nil
-}
-
-// Transaction example
-func CreateUserWithRole(user *models.User, roleID uint, clientID uint) error {
-    tx := database.DB.Begin()
-    defer func() {
-        if r := recover(); r != nil {
-            tx.Rollback()
-        }
-    }()
-
-    // Step 1: Create user
-    if err := tx.Create(user).Error; err != nil {
-        tx.Rollback()
-        return err
-    }
-
-    // Step 2: Create user role
-    userRole := models.UserRole{
-        UserID:   user.ID,
-        RoleID:   roleID,
-        ClientID: clientID,
-    }
-    if err := tx.Create(&userRole).Error; err != nil {
-        tx.Rollback()
-        return err
-    }
-
-    return tx.Commit().Error
-}
 ```
 
+> The auth module declares an **exported** `Repository` interface plus an unexported `repository`
+> struct implementation, because the interface is its module-internal data-access contract. The
+> example module keeps it simpler — a plain exported `Repository` struct, with the *interface* it
+> satisfies defined by the consuming service. Both are valid; prefer the example's simpler shape
+> for new modules unless you need to swap implementations.
+
 **✅ Repositories SHOULD:**
-- Perform CRUD operations
-- Build database queries
-- Use GORM or parameterized queries
-- Handle database-specific errors
-- Use transactions for multi-step operations
-- Optimize queries (use Preload, Select, etc.)
-- Return domain models
+- Hold the injected `*gorm.DB`; never use the `database.DB` global.
+- Perform CRUD and build queries with GORM/parameterized SQL.
+- Translate database-specific errors (`gorm.ErrRecordNotFound` → `nil, nil`).
+- Use transactions for multi-step operations.
+- Optimize queries (`Preload`, `Select`, paging).
+- Return the module's own models.
 
 **❌ Repositories MUST NOT:**
-- Contain business logic
-- Validate business rules
-- Call other repositories
-- Import service packages
-- Transform data for API responses
+- Contain business logic or validate business rules.
+- Call another module's repository.
+- Import the service or handler layer.
 
 **Size Limits:**
-- **Maximum 30 lines** per repository function
-- **Maximum 300 lines** per repository file
+- **Maximum 30 lines** per repository method.
+- **Maximum 300 lines** per repository file.
 
 ---
 
 ## 6. IMPLEMENTATION PATTERNS
 
-### 6.1 Struct-Based Controller Pattern
+### 6.1 Handler Pattern
 
-**✅ REQUIRED Pattern:**
+**✅ REQUIRED Pattern (struct + consumer-defined `service` interface):**
 ```go
-// File: internal/app/controllers/user_controller.go
-package controllers
+// File: internal/modules/example/handler.go
+package example
 
 import (
+    "context"
+
+    "github.com/0xdiaz/gin-boilerplate/pkg/logger"
+    "github.com/0xdiaz/gin-boilerplate/pkg/utils"
     "github.com/gin-gonic/gin"
-    "github.com/your-org/project/internal/app/dto"
-    "github.com/your-org/project/internal/app/services"
-    "github.com/your-org/project/pkg/utils"
 )
 
-// UserController handles user-related HTTP requests
-type UserController struct {
-    service *services.UserService
+// service is the business contract this handler needs (consumer-defined for testability).
+type service interface {
+    List(ctx context.Context) ([]*Example, error)
 }
 
-// NewUserController creates a new UserController instance
-func NewUserController(service *services.UserService) *UserController {
-    return &UserController{
-        service: service,
+// Handler is the HTTP layer for the example module.
+type Handler struct {
+    svc service
+}
+
+// NewHandler creates a Handler backed by the given service.
+func NewHandler(svc service) *Handler {
+    return &Handler{svc: svc}
+}
+
+// List handles GET /examples.
+func (h *Handler) List(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "example.Handler.List")
+    data, err := h.svc.List(ctx)
+    if err != nil {
+        logger.LogFinish(ctx, "example.Handler.List", err, start)
+        utils.InternalServerError(c, err, "Failed to retrieve data")
+        return
     }
-}
-
-// List handles GET /api/users
-func (ctrl *UserController) List(c *gin.Context) {
-    // Implementation
-}
-
-// Get handles GET /api/users/:id
-func (ctrl *UserController) Get(c *gin.Context) {
-    // Implementation
-}
-
-// Create handles POST /api/users
-func (ctrl *UserController) Create(c *gin.Context) {
-    // Implementation
-}
-
-// Update handles PUT /api/users/:id
-func (ctrl *UserController) Update(c *gin.Context) {
-    // Implementation
-}
-
-// Delete handles DELETE /api/users/:id
-func (ctrl *UserController) Delete(c *gin.Context) {
-    // Implementation
+    logger.LogFinish(ctx, "example.Handler.List", nil, start)
+    utils.Ok(c, data, "Data retrieved successfully")
 }
 ```
 
-**❌ WRONG Pattern (Standalone Functions):**
+**❌ WRONG Pattern (standalone function on a global):**
 ```go
-// DON'T DO THIS - Old pattern
-func CreateUser(c *gin.Context) {
-    // Direct implementation without struct
-}
-```
-
-**Router Registration:**
-```go
-// File: internal/app/routers/index.go
-func RegisterRoutes(router *gin.Engine) {
-    // Initialize dependencies
-    userService := services.NewUserService()
-    userController := controllers.NewUserController(userService)
-
-    // Register routes with controller methods
-    api := router.Group("/api")
-    {
-        users := api.Group("/users")
-        {
-            users.GET("", userController.List)
-            users.GET("/:id", userController.Get)
-            users.POST("", userController.Create)
-            users.PUT("/:id", userController.Update)
-            users.DELETE("/:id", userController.Delete)
-        }
-    }
+// DON'T DO THIS
+func ListExamples(c *gin.Context) {
+    var list []Example
+    database.DB.Find(&list) // ❌ global DB + business logic in the HTTP layer
+    c.JSON(200, list)       // ❌ hand-written response
 }
 ```
 
 ---
 
-### 6.2 Struct-Based Service Pattern
+### 6.2 Service Pattern
 
-**✅ REQUIRED Pattern:**
+**✅ REQUIRED Pattern (struct + consumer-defined `repository` interface):**
 ```go
-// File: internal/app/services/user_service.go
-package services
+// File: internal/modules/example/service.go
+package example
 
-type UserService struct {
-    // Dependencies (if needed)
+import (
+    "context"
+
+    "github.com/0xdiaz/gin-boilerplate/pkg/logger"
+)
+
+// repository is the data-access contract this service needs.
+type repository interface {
+    List() ([]*Example, error)
 }
 
-func NewUserService() *UserService {
-    return &UserService{}
+type Service struct {
+    repo repository
 }
 
-// Public methods - implement business operations
-func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
-    // Business logic
-    return nil
+func NewService(repo repository) *Service {
+    return &Service{repo: repo}
 }
 
-func (s *UserService) GetUserByID(id uint) (*models.User, error) {
-    // Business logic
-    return nil, nil
-}
-
-// Private helper methods
-func (s *UserService) validateUser(req *dto.CreateUserRequest) error {
-    // Validation logic
-    return nil
+func (s *Service) List(ctx context.Context) ([]*Example, error) {
+    ctx, start := logger.LogStart(ctx, "example.Service.List")
+    list, err := s.repo.List()
+    logger.LogFinish(ctx, "example.Service.List", err, start)
+    return list, err
 }
 ```
 
 ---
 
-### 6.3 Function-Based Repository Pattern
+### 6.3 Repository Pattern
 
-**✅ CURRENT Pattern (Simple, Direct):**
+**✅ REQUIRED Pattern (struct holding the injected `*gorm.DB`):**
 ```go
-// File: internal/domain/repositories/user_repo.go
-package repositories
+// File: internal/modules/example/repository.go
+package example
 
-// Direct functions for data access
-func CreateUser(user *models.User) error {
-    return database.DB.Create(user).Error
-}
+import "gorm.io/gorm"
 
-func GetUserByID(id uint) (*models.User, error) {
-    var user models.User
-    err := database.DB.Where("id = ?", id).First(&user).Error
-    return &user, err
-}
-
-func GetUserByEmail(email string) (*models.User, error) {
-    var user models.User
-    err := database.DB.Where("email = ?", email).First(&user).Error
-    return &user, err
-}
-
-func UpdateUser(user *models.User) error {
-    return database.DB.Save(user).Error
-}
-
-func DeleteUser(id uint) error {
-    return database.DB.Delete(&models.User{}, id).Error
-}
-```
-
-**Alternative: Interface-Based Repository (For Testing):**
-```go
-// If you need mocking for tests
-type UserRepository interface {
-    Create(user *models.User) error
-    GetByID(id uint) (*models.User, error)
-}
-
-type userRepoImpl struct {
+type Repository struct {
     db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
-    return &userRepoImpl{db: db}
+func NewRepository(db *gorm.DB) *Repository {
+    return &Repository{db: db}
+}
+
+func (r *Repository) List() ([]*Example, error) {
+    var list []*Example
+    if err := r.db.Find(&list).Error; err != nil {
+        return nil, err
+    }
+    return list, nil
+}
+```
+
+**❌ WRONG Pattern (package functions on the global `database.DB`):**
+```go
+// DON'T DO THIS — globals make the repository untestable and hide dependencies.
+func ListExamples() ([]*Example, error) {
+    var list []*Example
+    return list, database.DB.Find(&list).Error // ❌ global state
 }
 ```
 
 ---
 
-### 6.4 Response Utility Pattern
+### 6.4 Module Wiring Pattern
 
-**✅ MANDATORY: Always Use Response Utilities**
+A module is the single object `bootstrap` touches. It satisfies the `Module` interface
+(`Name() string`, `Models() []any`, `RegisterRoutes(api *gin.RouterGroup)`) and exposes a minimal
+public `API` for other modules.
 
 ```go
-// File: internal/app/controllers/user_controller.go
+// File: internal/modules/example/module.go
+package example
 
-import "github.com/your-org/project/pkg/utils"
+import (
+    "context"
 
-func (ctrl *UserController) Create(c *gin.Context) {
-    var req dto.CreateUserRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        // ✅ Use utility for validation errors
-        utils.BadRequest(c, err, "Validation failed")
-        return
-    }
+    "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
+)
 
-    user, err := ctrl.service.CreateUser(&req)
-    if err != nil {
-        // ✅ Use utility for errors
-        utils.InternalServerError(c, err, "Failed to create user")
-        return
-    }
-
-    // ✅ Use utility for success
-    utils.Created(c, user, "User created successfully")
+// API is the public surface other modules depend on. Keep it minimal — other
+// modules call this, they never import the example module's internals.
+type API interface {
+    List(ctx context.Context) ([]*Example, error)
 }
 
-func (ctrl *UserController) Get(c *gin.Context) {
-    id := c.Param("id")
-    user, err := ctrl.service.GetUserByID(id)
-    if err != nil {
-        // ✅ Use utility for not found
-        utils.NotFound(c, err, "User not found")
-        return
-    }
+type Module struct {
+    svc     *Service
+    handler *Handler
+}
 
-    // ✅ Use utility for success
-    utils.Ok(c, user, "User retrieved successfully")
+// New builds the module from an injected DB connection.
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))
+    return &Module{svc: svc, handler: NewHandler(svc)}
+}
+
+func (m *Module) Name() string   { return "example" }
+func (m *Module) Models() []any  { return []any{&Example{}} }
+
+// RegisterRoutes mounts the module's routes under the given API group (e.g. /api/v1).
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    api.GET("/examples", m.handler.List)
+    api.GET("/datatables", m.handler.Datatables)
+}
+
+// API exposes this module's public contract to other modules.
+func (m *Module) API() API { return m.svc }
+```
+
+**Registering the module** — one line in `buildModules()`:
+```go
+// File: internal/bootstrap/modules.go
+func buildModules(db *gorm.DB) []Module {
+    return []Module{
+        auth.New(db),
+        example.New(db),
+        // newmodule.New(db),  ← add here
+    }
 }
 ```
 
-**Available Response Functions:**
-```go
-// Success responses
-utils.Ok(c, data, message)              // 200 OK
-utils.Created(c, data, message)         // 201 Created
-utils.NoContent(c)                      // 204 No Content
+**Mounting** happens in `internal/bootstrap/server.go`: business modules go under `/api/v1` with
+rate limiting; the `health` **system** module is special — it implements `New(db)` +
+`RegisterSystem(r)` and mounts `/health` and `/metrics` at the **root**, not under `/api/v1`.
 
-// Error responses
-utils.BadRequest(c, err, message)       // 400 Bad Request
-utils.Unauthorized(c, err, message)     // 401 Unauthorized
-utils.Forbidden(c, err, message)        // 403 Forbidden
-utils.NotFound(c, err, message)         // 404 Not Found
-utils.Conflict(c, err, message)         // 409 Conflict
-utils.UnprocessableEntity(c, err, msg)  // 422 Unprocessable
-utils.TooManyRequests(c, err, message)  // 429 Too Many Requests
-utils.InternalServerError(c, err, msg)  // 500 Internal Server Error
-utils.BadGateway(c, err, message)       // 502 Bad Gateway
+```go
+// File: internal/bootstrap/server.go (abridged)
+health.New(db).RegisterSystem(r)            // /health, /metrics at ROOT
+
+v1 := r.Group("/api/v1")
+v1.Use(middleware.RateLimitMiddleware())
+for _, m := range mods {
+    m.RegisterRoutes(v1)                    // every business module under /api/v1
+}
+```
+
+Migrations are automatic: `bootstrap` collects every module's `Models()` and passes them to
+`migrations.Run(db, models)`.
+
+---
+
+### 6.5 Response Utility Pattern
+
+**✅ MANDATORY: Always use the response utilities in `pkg/utils`.**
+
+```go
+import "github.com/0xdiaz/gin-boilerplate/pkg/utils"
+
+func (h *Handler) Create(c *gin.Context) {
+    var req CreateRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequest(c, err, "Invalid request data") // 400 + field errors
+        return
+    }
+
+    data, err := h.svc.Create(c.Request.Context(), &req)
+    if err != nil {
+        if apiErr := errToAPIError(err); apiErr != nil {
+            utils.RespondWithAPIError(c, apiErr) // mapped sentinel error
+            return
+        }
+        utils.InternalServerError(c, err, "Failed to create")
+        return
+    }
+
+    utils.Created(c, data, "Created successfully") // 201
+}
+```
+
+**Available response functions (`pkg/utils/response.go`):**
+```go
+// Success
+utils.Ok(c, data, message)                          // 200 OK
+utils.Created(c, data, message)                     // 201 Created
+utils.NoContent(c)                                  // 204 No Content
+
+// Errors
+utils.BadRequest(c, err, message)                   // 400  (formats validation field errors)
+utils.Unauthorized(c, err, message)                 // 401
+utils.Forbidden(c, err, message)                    // 403
+utils.NotFound(c, err, message)                     // 404
+utils.Conflict(c, err, message)                     // 409
+utils.UnprocessableEntity(c, err, message)          // 422
+utils.TooManyRequests(c, err, message)              // 429
+utils.InternalServerError(c, err, message)          // 500
+utils.BadGateway(c, err, message)                   // 502
+utils.ServiceUnavailable(c, err, message)           // 503
+utils.ServiceUnavailableWithData(c, data, message)  // 503 with a body (health uses this)
+
+// From a mapped domain error
+utils.RespondWithAPIError(c, apiErr)                // uses apiErr.Code / .Message / .Details
 
 // Generic
 utils.HandleSuccess(c, statusCode, data, message)
 utils.HandleErrors(c, statusCode, err, message)
 ```
 
-**Response Format (Consistent):**
+**Response Format (`pkg/types` — `SuccessResponse` / `ErrorResponse`):**
 ```json
 {
     "success": true,
-    "message": "User created successfully",
-    "data": {
-        "id": 1,
-        "name": "John Doe",
-        "email": "john@example.com"
-    },
+    "message": "Data retrieved successfully",
+    "data": { "...": "..." },
     "errors": null
 }
 ```
@@ -1271,188 +1131,139 @@ utils.HandleErrors(c, statusCode, err, message)
 
 ### 7.1 Standard CRUD Flow
 
-**Complete Request Flow for CREATE Operation:**
+**Complete request flow for a LIST/CREATE operation (example module):**
 
 ```
-1. HTTP POST /api/users
-   Body: {"name": "John", "email": "john@example.com", "password": "secret"}
+1. HTTP GET /api/v1/examples
        ↓
-2. [Middleware Stack]
-   • CORS Middleware
-   • Rate Limit Middleware
-   • Auth Middleware (extract user from JWT)
-   • Activity Logger Middleware
+2. [Global Middleware] (internal/bootstrap/server.go)
+   • gin.Recovery
+   • CORSMiddleware
+   • RequestIDMiddleware   (request id → context)
+   • RequestLogMiddleware
+   • MetricsMiddleware
        ↓
-3. [Router]
-   Match route: POST /api/users → userController.Create
+3. [/api/v1 group]
+   • RateLimitMiddleware   (per client IP)
        ↓
-4. [Controller] - user_controller.go
-   func (ctrl *UserController) Create(c *gin.Context) {
-       // Parse request
-       var req dto.CreateUserRequest
-       if err := c.ShouldBindJSON(&req); err != nil {
-           utils.BadRequest(c, err, "Invalid input")
-           return
-       }
-
-       // Call service
-       user, err := ctrl.service.CreateUser(&req)
-       if err != nil {
-           utils.InternalServerError(c, err, "Failed to create")
-           return
-       }
-
-       // Return response
-       utils.Created(c, user, "User created")
+4. [Module route]   example.Module.RegisterRoutes → m.handler.List
+       ↓
+5. [Handler] internal/modules/example/handler.go
+   func (h *Handler) List(c *gin.Context) {
+       ctx, start := logger.LogStart(c.Request.Context(), "example.Handler.List")
+       data, err := h.svc.List(ctx)            // call service via `service` interface
+       if err != nil { utils.InternalServerError(c, err, "Failed to retrieve data"); return }
+       logger.LogFinish(ctx, "example.Handler.List", nil, start)
+       utils.Ok(c, data, "Data retrieved successfully")
    }
        ↓
-5. [Service] - user_service.go
-   func (s *UserService) CreateUser(req *dto.CreateUserRequest) (*models.User, error) {
-       // 1. Validate business rules
-       if err := s.validate(req); err != nil {
-           return nil, err
-       }
-
-       // 2. Check duplicates
-       existing, _ := repositories.GetUserByEmail(req.Email)
-       if existing != nil {
-           return nil, fmt.Errorf("email exists")
-       }
-
-       // 3. Hash password
-       hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password))
-
-       // 4. Build model
-       user := &models.User{
-           Name:     req.Name,
-           Email:    req.Email,
-           Password: string(hashed),
-       }
-
-       // 5. Save to DB
-       if err := repositories.CreateUser(user); err != nil {
-           return nil, err
-       }
-
-       return user, nil
+6. [Service] internal/modules/example/service.go
+   func (s *Service) List(ctx context.Context) ([]*Example, error) {
+       ctx, start := logger.LogStart(ctx, "example.Service.List")
+       list, err := s.repo.List()              // call repo via `repository` interface
+       logger.LogFinish(ctx, "example.Service.List", err, start)
+       return list, err
    }
        ↓
-6. [Repository] - user_repo.go
-   func CreateUser(user *models.User) error {
-       return database.DB.Create(user).Error
+7. [Repository] internal/modules/example/repository.go
+   func (r *Repository) List() ([]*Example, error) {
+       var list []*Example
+       return list, r.db.Find(&list).Error     // injected *gorm.DB
    }
        ↓
-7. [Database]
-   INSERT INTO users (name, email, password) VALUES (?, ?, ?)
+8. [Database] SELECT * FROM examples
        ↓
-8. [Response Back Up The Stack]
-   Repository → Service → Controller → Middleware → HTTP Response
-       ↓
-9. HTTP 201 Created
-   Body: {
-       "success": true,
-       "message": "User created successfully",
-       "data": {
-           "id": 1,
-           "name": "John",
-           "email": "john@example.com"
-       }
-   }
+9. Response back up the stack → HTTP 200
+   { "success": true, "message": "Data retrieved successfully", "data": [...], "errors": null }
 ```
+
+For CREATE: the handler binds the DTO (`c.ShouldBindJSON`), the service validates business rules
+and builds the model, the repository persists it, and the handler responds with `utils.Created`.
 
 ---
 
 ### 7.2 Authentication Flow Pattern
 
+The auth module uses **JWT directly** (no OTP step). Routes are mounted by
+`auth.Module.RegisterRoutes` under `/api/v1`.
+
 ```
-1. POST /login
-   Body: {"email": "user@example.com", "password": "secret"}
-       ↓
-2. [AuthController] → authService.Login(req)
-       ↓
-3. [AuthService]
-   • Get user by email (via repository)
-   • Compare password hash
-   • Generate OTP code
-   • Create OTP session (via repository)
-   • Send OTP email (background job)
-   • Return OTP token
-       ↓
-4. Response: {"otpToken": "abc123", "role": "Admin"}
-       ↓
-5. POST /verify-otp
-   Body: {"otpToken": "abc123", "code": "123456"}
-       ↓
-6. [AuthController] → authService.VerifyOTP(req)
-       ↓
-7. [AuthService]
-   • Get OTP session by token (via repository)
-   • Check expiration
-   • Validate code
-   • Get user by ID (via repository)
-   • Generate JWT token
-   • Delete OTP session (via repository)
-   • Return JWT + user data
-       ↓
-8. Response: {"token": "eyJhbGc...", "user": {...}}
-       ↓
-9. Subsequent Requests with JWT:
-   GET /api/users
-   Header: Authorization: Bearer eyJhbGc...
-       ↓
-10. [AuthMiddleware]
-    • Extract token from header
-    • Validate JWT
-    • Extract claims (user_id, email, role)
-    • Set in context: c.Set("user_id", id)
-    • Call c.Next()
-       ↓
-11. [Controller] can access: c.GetUint("user_id")
+PUBLIC routes (no auth):
+  POST /api/v1/auth/register         → Handler.Register
+  POST /api/v1/auth/login            → Handler.Login
+  POST /api/v1/auth/refresh          → Handler.RefreshToken
+  POST /api/v1/auth/forgot-password  → Handler.ForgotPassword
+  POST /api/v1/auth/reset-password   → Handler.ResetPassword
+
+PROTECTED route (auth.Module.Middleware() guard):
+  GET  /api/v1/profile               → Handler.Profile
 ```
+
+**Login flow:**
+```
+1. POST /api/v1/auth/login   {"email": "...", "password": "..."}
+       ↓
+2. [Handler.Login] bind LoginRequest → service.Login(ctx, &req)
+       ↓
+3. [Service.Login]
+   • userRepo.GetUserByEmail(email)
+   • bcrypt.CompareHashAndPassword(...)        (invalid → ErrInvalidCredentials)
+   • generateToken(user)                        (signed JWT, user_id + email, 24h)
+   • generateRefreshToken()                     (32 random bytes → hex)
+   • userRepo.UpdateUser(user)                  (persist refresh token)
+   • return *AuthResponse{User, AccessToken, RefreshToken, TokenType:"Bearer"}
+       ↓
+4. [Handler.Login] on error: errToAPIError(err) → utils.RespondWithAPIError
+                   on success: utils.Ok(c, response, "Login successful")
+       ↓
+5. Response: { "success": true, "data": { "user": {...},
+               "access_token": "eyJ...", "refresh_token": "...", "token_type": "Bearer" } }
+
+Subsequent protected requests:
+6. GET /api/v1/profile   Header: Authorization: Bearer eyJ...
+       ↓
+7. [auth.Module.Middleware()]  internal/modules/auth/middleware.go
+   • split "Bearer <token>"
+   • service.ValidateToken(token) → userID   (HS256, checks signing method & exp)
+   • c.Set("user_id", userID); c.Next()       (401 via utils.Unauthorized on failure)
+       ↓
+8. [Handler.Profile]  userID := c.GetUint("user_id")
+```
+
+> The JWT secret comes from config (`config.Get().Server.JWTSecret`). The guard lives in the auth
+> module and is exposed via `Module.Middleware()`; other modules reuse it rather than reimplementing.
 
 ---
 
 ### 7.3 Transaction Flow Pattern
 
-**Multi-Step Operation with Database Transaction:**
+**Multi-step operations use a GORM transaction inside the repository**, on the injected `*gorm.DB`:
 
 ```go
-func (s *TransactionService) ProcessPayment(req *dto.PaymentRequest) error {
-    // Use GORM transaction
-    return database.DB.Transaction(func(tx *gorm.DB) error {
-        // Step 1: Create transaction record
-        transaction := &models.Transaction{
-            ClientID: req.ClientID,
-            Amount:   req.Amount,
-            Status:   "pending",
-        }
-        if err := tx.Create(transaction).Error; err != nil {
+// File: internal/modules/<name>/repository.go
+func (r *Repository) ProcessPayment(clientID uint, amount float64) error {
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // Step 1: create the transaction record
+        txn := &Transaction{ClientID: clientID, Amount: amount, Status: "pending"}
+        if err := tx.Create(txn).Error; err != nil {
             return fmt.Errorf("create transaction: %w", err)
         }
 
-        // Step 2: Deduct client balance
-        if err := tx.Model(&models.Client{}).
-            Where("id = ?", req.ClientID).
-            Update("balance", gorm.Expr("balance - ?", req.Amount)).
-            Error; err != nil {
+        // Step 2: deduct balance
+        if err := tx.Model(&Account{}).
+            Where("client_id = ?", clientID).
+            Update("balance", gorm.Expr("balance - ?", amount)).Error; err != nil {
             return fmt.Errorf("update balance: %w", err)
         }
 
-        // Step 3: Create transaction log
-        log := &models.TransactionLog{
-            TransactionID: transaction.ID,
-            Action:        "payment_processed",
-        }
-        if err := tx.Create(log).Error; err != nil {
-            return fmt.Errorf("create log: %w", err)
-        }
-
-        // All steps succeeded - commit
+        // All steps succeeded — returning nil commits; any error rolls back automatically.
         return nil
     })
-    // If any step fails, all changes are rolled back automatically
 }
 ```
+
+The service orchestrates and decides *when* to call this; the repository owns the transaction
+mechanics. Keep the closure short and let the returned error drive commit/rollback.
 
 ---
 
@@ -1463,116 +1274,85 @@ func (s *TransactionService) ProcessPayment(req *dto.PaymentRequest) error {
 ```
 HTTP Request (JSON)
        ↓
-[Controller] Parse to DTO
+[Handler] c.ShouldBindJSON → DTO
        ↓
-dto.CreateUserRequest {
-    Name:     "John Doe"
-    Email:    "john@example.com"
+RegisterRequest {
+    Name:     "Jane Doe"
+    Email:    "jane@example.com"
     Password: "plaintext"
 }
        ↓
-[Service] Transform to Domain Model
+[Service] transform DTO → domain model (apply business logic)
        ↓
-models.User {
-    Name:     "John Doe"
-    Email:    "john@example.com"
-    Password: "$2a$10$hashed..." (bcrypt)
-    RoleID:   2
+User {
+    Name:     "Jane Doe"
+    Email:    "jane@example.com"
+    Password: "$2a$10$hashed..."  (bcrypt)
 }
        ↓
-[Repository] Save to Database
+[Repository] r.db.Create(user)  → DB row
        ↓
-Database Row:
-    id=1, name="John Doe", email="john@...", password="$2a$10$..."
+[Service] build a response DTO (never leak secrets)
        ↓
-[Repository] Return Domain Model
-       ↓
-models.User {
-    ID:       1
-    Name:     "John Doe"
-    Email:    "john@example.com"
-    Password: "$2a$10$hashed..."
-    CreatedAt: 2025-11-08T10:30:00Z
+AuthResponse {
+    User:        UserResponse{ID:1, Name:"Jane Doe", Email:"jane@example.com"}
+    AccessToken: "eyJ..."
+    // Password NEVER included
 }
        ↓
-[Service] Return Model (or transform to DTO if needed)
-       ↓
-[Controller] Transform to Response DTO
-       ↓
-dto.UserResponse {
-    ID:    1
-    Name:  "John Doe"
-    Email: "john@example.com"
-    // Password NOT included in response
-}
-       ↓
-HTTP Response (JSON)
+[Handler] utils.Ok / utils.Created → standard JSON envelope
 {
     "success": true,
-    "message": "User created",
-    "data": {
-        "id": 1,
-        "name": "John Doe",
-        "email": "john@example.com"
-    }
+    "message": "...",
+    "data": { "user": {...}, "access_token": "..." },
+    "errors": null
 }
 ```
 
 **Key Transformations:**
-1. **Controller**: JSON → DTO
-2. **Service**: DTO → Domain Model (apply business logic)
-3. **Repository**: Domain Model ↔ Database
-4. **Service**: Domain Model → Domain Model (or DTO)
-5. **Controller**: Domain Model/DTO → Response JSON
+1. **Handler:** JSON → DTO (binding/validation at the boundary).
+2. **Service:** DTO → domain model (business logic); domain model → response DTO.
+3. **Repository:** domain model ↔ database.
+4. **Handler:** response DTO → standard JSON envelope via `pkg/utils`.
 
 ---
 
 ### 8.2 DTO vs Model Usage
 
-**✅ When to Use DTOs:**
-- API request payloads
-- API response payloads
-- External API communication
-- Data validation at boundaries
+**✅ When to use DTOs:**
+- API request payloads (binding/validation).
+- API response payloads (shape the client sees; strip secrets).
+- External/inter-service communication.
 
-**✅ When to Use Models:**
-- Internal business logic
-- Database operations
-- Domain rules enforcement
-- Repository layer
+**✅ When to use Models:**
+- Internal business logic and domain rules.
+- Database operations in the repository.
 
-**Example:**
+**Example (auth module):**
 ```go
-// DTO for API (external boundary)
-type CreateUserRequest struct {
-    Name     string `json:"name" binding:"required"`
+// DTO for the API boundary (dto.go)
+type RegisterRequest struct {
+    Name     string `json:"name" binding:"required,min=3,max=255"`
     Email    string `json:"email" binding:"required,email"`
     Password string `json:"password" binding:"required,min=8"`
 }
 
-// Model for domain (internal)
+// Model for the domain & DB (model.go). Password is never serialized.
 type User struct {
-    ID        uint      `gorm:"primarykey"`
-    Name      string    `gorm:"size:255;not null"`
-    Email     string    `gorm:"size:255;unique;not null"`
-    Password  string    `gorm:"size:255;not null"` // Hashed
-    RoleID    uint      `gorm:"not null"`
-    CreatedAt time.Time
-    UpdatedAt time.Time
-    DeletedAt gorm.DeletedAt `gorm:"index"`
-
-    // Relationships
-    UserRoles *UserRole `gorm:"foreignKey:UserID"`
+    ID        uint       `json:"id" gorm:"primaryKey"`
+    Name      string     `json:"name" gorm:"type:varchar(255);not null"`
+    Email     string     `json:"email" gorm:"type:varchar(255);uniqueIndex;not null"`
+    Password  string     `json:"-" gorm:"type:varchar(255);not null"` // bcrypt, never exposed
+    CreatedAt time.Time  `json:"created_at" gorm:"autoCreateTime"`
+    UpdatedAt time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+    DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
 }
 
-// DTO for API response
+// DTO for the API response — only safe fields.
 type UserResponse struct {
-    ID        uint      `json:"id"`
-    Name      string    `json:"name"`
-    Email     string    `json:"email"`
-    Role      string    `json:"role"`
-    CreatedAt time.Time `json:"created_at"`
-    // Password NEVER included in response!
+    ID    uint   `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 ```
 
@@ -1583,252 +1363,166 @@ type UserResponse struct {
 ### 9.1 Error Flow Pattern
 
 ```
-[Repository] Database Error
+[Repository] DB error
+       ↓  translate (gorm.ErrRecordNotFound → nil,nil) or wrap with %w
+    return nil, fmt.Errorf("failed to get user by email: %w", err)
        ↓
-    err = "record not found"
+[Service] add business context; return a SENTINEL error for known cases
        ↓
-[Repository] Wrap with context
+    if existing != nil { return nil, ErrEmailAlreadyExists }
+    return nil, fmt.Errorf("failed to check email: %w", err)
        ↓
-    return fmt.Errorf("failed to get user %d: %w", id, err)
+[Handler] map sentinel → APIError, else 500
        ↓
-[Service] Catch error, add business context
-       ↓
-    return fmt.Errorf("user retrieval failed: %w", err)
-       ↓
-[Controller] Handle error, return appropriate HTTP status
-       ↓
-    if err != nil {
-        utils.NotFound(c, err, "User not found")
+    if apiErr := errToAPIError(err); apiErr != nil {
+        utils.RespondWithAPIError(c, apiErr)   // e.g. 409 Conflict
         return
     }
+    utils.InternalServerError(c, err, "Failed to register user")
        ↓
-HTTP Response: 404 Not Found
-{
-    "success": false,
-    "message": "User not found",
-    "errors": {...}
-}
+HTTP Response: 409 Conflict
+{ "success": false, "message": "Email already exists", "data": null, "errors": null }
 ```
 
-### 9.2 Custom Error Types
+### 9.2 Sentinel Errors & APIError Mapping
+
+The pattern is: **each module defines sentinel errors; the handler maps them to `types.APIError`
+and responds via `utils.RespondWithAPIError`.** `pkg/types` provides the `APIError` type
+(`{Code, Message, Details}`) and a few shared predefined errors.
 
 ```go
-// File: pkg/types/errors.go
-package types
-
-import "errors"
-
-// Business errors
+// 1. The module defines sentinel errors (internal/modules/auth/service.go):
 var (
-    ErrNotFound          = errors.New("resource not found")
-    ErrUnauthorized      = errors.New("unauthorized access")
-    ErrForbidden         = errors.New("forbidden access")
-    ErrInvalidInput      = errors.New("invalid input data")
-    ErrDuplicateEntry    = errors.New("duplicate entry")
-    ErrExternalAPIFailed = errors.New("external API call failed")
-    ErrInsufficientBalance = errors.New("insufficient balance")
+    ErrEmailAlreadyExists  = errors.New("email already exists")
+    ErrInvalidCredentials  = errors.New("invalid email or password")
+    ErrUserNotFound        = errors.New("user not found")
+    ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+    // ...
 )
 
-// Usage in service
-func (s *UserService) GetUserByID(id uint) (*models.User, error) {
-    user, err := repositories.GetUserByID(id)
-    if err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            return nil, types.ErrNotFound
-        }
-        return nil, fmt.Errorf("get user: %w", err)
+// 2. The handler maps them to types.APIError (internal/modules/auth/handler.go):
+func errToAPIError(err error) *types.APIError {
+    switch {
+    case errors.Is(err, ErrEmailAlreadyExists):
+        return &types.APIError{Code: http.StatusConflict, Message: "Email already exists"}
+    case errors.Is(err, ErrInvalidCredentials):
+        return &types.APIError{Code: http.StatusUnauthorized, Message: "Invalid email or password"}
+    case errors.Is(err, ErrUserNotFound):
+        return &types.APIError{Code: http.StatusNotFound, Message: "User not found"}
+    default:
+        return nil // unknown → caller falls back to 500
     }
-    return user, nil
 }
 
-// Usage in controller
-func (ctrl *UserController) Get(c *gin.Context) {
-    user, err := ctrl.service.GetUserByID(id)
-    if err != nil {
-        if errors.Is(err, types.ErrNotFound) {
-            utils.NotFound(c, err, "User not found")
-            return
-        }
-        utils.InternalServerError(c, err, "Failed to get user")
+// 3. The handler uses it:
+response, err := h.service.Login(ctx, &req)
+if err != nil {
+    if apiErr := errToAPIError(err); apiErr != nil {
+        utils.RespondWithAPIError(c, apiErr)
         return
     }
-    utils.Ok(c, user, "User retrieved")
+    utils.InternalServerError(c, err, "Failed to authenticate user")
+    return
 }
 ```
+
+`pkg/types` also ships ready-made `APIError` values (`types.ErrNotFound`, `types.ErrUnauthorized`,
+`types.ErrConflict`, `types.ErrRateLimitExceeded`, …) for cases where a module does not need its
+own message. All HTTP error responses go through `pkg/utils` — do not duplicate status-code logic
+elsewhere.
 
 ### 9.3 Error Wrapping Pattern
 
-**✅ ALWAYS wrap errors with context:**
+**✅ ALWAYS wrap unexpected errors with context (`%w`) so the chain stays inspectable:**
 
 ```go
-// Repository layer
-func GetUserByID(id uint) (*models.User, error) {
-    var user models.User
-    if err := database.DB.First(&user, id).Error; err != nil {
-        // Add context: what failed + which resource
-        return nil, fmt.Errorf("failed to get user %d: %w", id, err)
+// Repository: what failed + which resource
+func (r *repository) GetUserByEmail(email string) (*User, error) {
+    var user User
+    if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, nil
+        }
+        return nil, fmt.Errorf("failed to get user by email: %w", err)
     }
     return &user, nil
 }
 
-// Service layer
-func (s *UserService) GetUserByID(id uint) (*models.User, error) {
-    user, err := repositories.GetUserByID(id)
+// Service: add business context, or return a sentinel for known cases
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+    existing, err := s.userRepo.GetUserByEmail(req.Email)
     if err != nil {
-        logger.Errorf("user retrieval failed for ID %d: %v", id, err)
-        // Add business context
-        return nil, fmt.Errorf("user retrieval failed: %w", err)
+        return nil, fmt.Errorf("failed to check email: %w", err)
     }
-    return user, nil
-}
-
-// Controller layer
-func (ctrl *UserController) Get(c *gin.Context) {
-    user, err := ctrl.service.GetUserByID(id)
-    if err != nil {
-        // Convert to HTTP response
-        utils.InternalServerError(c, err, "Failed to get user")
-        return
+    if existing != nil {
+        return nil, ErrEmailAlreadyExists // sentinel — handler maps to 409
     }
-    utils.Ok(c, user, "User retrieved")
+    // ...
 }
 ```
 
-**Error Chain Example:**
+**Error chain example:**
 ```
-Original: record not found
-    ↓
-Repository: failed to get user 123: record not found
-    ↓
-Service: user retrieval failed: failed to get user 123: record not found
-    ↓
-Controller: HTTP 404 + "User not found"
+Original:    record not found
+Repository:  failed to get user by email: record not found
+Service:     failed to check email: failed to get user by email: record not found
+Handler:     HTTP 500 (unknown) — or a mapped APIError for a known sentinel
 ```
 
 ---
 
 ## 10. TESTING PATTERNS
 
+> **Prefer co-locating tests with the module** (`internal/modules/<name>/*_test.go`). Unit-test the
+> service with a hand-written **fake repository** (no DB). Handler tests use `httptest` + a mocked
+> service interface. Shared mocks for legacy tests live in `tests/mocks/`; new modules should prefer
+> in-package fakes. `make test` runs `./tests/unit/... ./internal/... ./pkg/...`.
+
 ### 10.1 Service Layer Testing Pattern
 
+The canonical example is `internal/modules/example/service_test.go`: a `fakeRepo` satisfies the
+unexported `repository` interface, so no database is needed.
+
 ```go
-// File: internal/app/services/user_service_test.go
-package services_test
+// File: internal/modules/example/service_test.go
+package example
 
 import (
+    "context"
     "testing"
 
+    "github.com/gin-gonic/gin"
     "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/mock"
-
-    "your-project/internal/app/dto"
-    "your-project/internal/app/services"
-    "your-project/internal/domain/models"
-    "your-project/pkg/types"
 )
 
-// Mock repository
-type MockUserRepository struct {
-    mock.Mock
+// fakeRepo satisfies the unexported repository interface — no DB needed.
+type fakeRepo struct {
+    items []*Example
+    err   error
 }
 
-func (m *MockUserRepository) GetUserByEmail(email string) (*models.User, error) {
-    args := m.Called(email)
-    if args.Get(0) == nil {
-        return nil, args.Error(1)
-    }
-    return args.Get(0).(*models.User), args.Error(1)
-}
+func (f *fakeRepo) List() ([]*Example, error)                      { return f.items, f.err }
+func (f *fakeRepo) Datatables(c *gin.Context) (interface{}, error) { return nil, f.err }
 
-func (m *MockUserRepository) CreateUser(user *models.User) error {
-    args := m.Called(user)
-    return args.Error(0)
-}
+func TestService_List(t *testing.T) {
+    svc := NewService(&fakeRepo{items: []*Example{{ID: 1, Data: "x"}}})
 
-// Test: Success case
-func TestCreateUser_Success(t *testing.T) {
-    // Arrange
-    mockRepo := new(MockUserRepository)
-    service := services.NewUserService(mockRepo)
+    got, err := svc.List(context.Background())
 
-    req := &dto.CreateUserRequest{
-        Name:     "John Doe",
-        Email:    "john@example.com",
-        Password: "secret123",
-    }
-
-    // Expect: Check email doesn't exist
-    mockRepo.On("GetUserByEmail", req.Email).
-        Return(nil, types.ErrNotFound)
-
-    // Expect: Create user
-    mockRepo.On("CreateUser", mock.AnythingOfType("*models.User")).
-        Return(nil)
-
-    // Act
-    err := service.CreateUser(req)
-
-    // Assert
     assert.NoError(t, err)
-    mockRepo.AssertExpectations(t)
+    assert.Len(t, got, 1)
+    assert.Equal(t, "x", got[0].Data)
 }
 
-// Test: Duplicate email
-func TestCreateUser_DuplicateEmail(t *testing.T) {
-    // Arrange
-    mockRepo := new(MockUserRepository)
-    service := services.NewUserService(mockRepo)
-
-    req := &dto.CreateUserRequest{
-        Name:     "John Doe",
-        Email:    "existing@example.com",
-        Password: "secret123",
-    }
-
-    existingUser := &models.User{
-        ID:    1,
-        Email: req.Email,
-    }
-
-    // Expect: Email already exists
-    mockRepo.On("GetUserByEmail", req.Email).
-        Return(existingUser, nil)
-
-    // Act
-    err := service.CreateUser(req)
-
-    // Assert
-    assert.Error(t, err)
-    assert.Contains(t, err.Error(), "email already exists")
-    mockRepo.AssertExpectations(t)
-}
-
-// Test: Repository error
-func TestCreateUser_RepositoryError(t *testing.T) {
-    // Arrange
-    mockRepo := new(MockUserRepository)
-    service := services.NewUserService(mockRepo)
-
-    req := &dto.CreateUserRequest{
-        Name:     "John Doe",
-        Email:    "john@example.com",
-        Password: "secret123",
-    }
-
-    mockRepo.On("GetUserByEmail", req.Email).
-        Return(nil, types.ErrNotFound)
-
-    mockRepo.On("CreateUser", mock.AnythingOfType("*models.User")).
-        Return(errors.New("database error"))
-
-    // Act
-    err := service.CreateUser(req)
-
-    // Assert
-    assert.Error(t, err)
-    mockRepo.AssertExpectations(t)
+func TestModule_Meta(t *testing.T) {
+    m := New(nil)
+    assert.Equal(t, "example", m.Name())
+    assert.Len(t, m.Models(), 1)
 }
 ```
+
+Because the test is **in-package** (`package example`), the fake can satisfy the unexported
+`repository` interface directly. To test an error path, set `fakeRepo.err` and assert it propagates.
 
 ### 10.2 Table-Driven Testing Pattern
 
@@ -1839,26 +1533,10 @@ func TestValidateEmail(t *testing.T) {
         email   string
         wantErr bool
     }{
-        {
-            name:    "valid email",
-            email:   "user@example.com",
-            wantErr: false,
-        },
-        {
-            name:    "missing @",
-            email:   "userexample.com",
-            wantErr: true,
-        },
-        {
-            name:    "empty email",
-            email:   "",
-            wantErr: true,
-        },
-        {
-            name:    "missing domain",
-            email:   "user@",
-            wantErr: true,
-        },
+        {name: "valid email", email: "user@example.com", wantErr: false},
+        {name: "missing @", email: "userexample.com", wantErr: true},
+        {name: "empty email", email: "", wantErr: true},
+        {name: "missing domain", email: "user@", wantErr: true},
     }
 
     for _, tt := range tests {
@@ -1876,566 +1554,413 @@ func TestValidateEmail(t *testing.T) {
 
 ## 11. COMPLETE FEATURE IMPLEMENTATION GUIDE
 
-### Step-by-Step: Adding a New "Product" Feature
+### Step-by-Step: Adding a New Module
 
-#### Step 1: Create Model
-```go
-// File: internal/domain/models/product.go
-package models
+> This follows `MODULE_GUIDE.md`'s recipe: **copy `internal/modules/example`**. The example module
+> is the canonical reference; every step below mirrors a real file in it.
 
-import (
-    "time"
-    "gorm.io/gorm"
-)
-
-type Product struct {
-    ID          uint           `gorm:"primarykey"`
-    Name        string         `gorm:"size:255;not null"`
-    Description string         `gorm:"type:text"`
-    Price       float64        `gorm:"not null"`
-    Stock       int            `gorm:"default:0"`
-    CategoryID  uint           `gorm:"not null"`
-    IsActive    bool           `gorm:"default:true"`
-    CreatedAt   time.Time
-    UpdatedAt   time.Time
-    DeletedAt   gorm.DeletedAt `gorm:"index"`
-
-    // Relationships
-    Category    *Category `gorm:"foreignKey:CategoryID"`
-}
+#### Step 0: Copy the reference module
+```bash
+cp -r internal/modules/example internal/modules/product
+# rename the package from `example` to `product` in every file
 ```
 
-#### Step 2: Create DTOs
+#### Step 1: Define the model (`model.go`)
 ```go
-// File: internal/app/dto/product_dto.go
-package dto
+// File: internal/modules/product/model.go
+package product
+
+import "time"
+
+// Product is a model this module owns. Each module owns its own tables.
+type Product struct {
+    ID          int        `json:"id" gorm:"primaryKey"`
+    Name        string     `json:"name" binding:"required"`
+    Price       float64    `json:"price"`
+    CreatedAt   *time.Time `json:"created_at"`
+    UpdatedAt   *time.Time `json:"updated_at"`
+}
+
+func (p *Product) TableName() string { return "products" }
+```
+
+#### Step 2: Define DTOs (`dto.go`, optional)
+```go
+// File: internal/modules/product/dto.go
+package product
 
 type CreateProductRequest struct {
-    Name        string  `json:"name" binding:"required,min=3,max=255"`
-    Description string  `json:"description"`
-    Price       float64 `json:"price" binding:"required,gt=0"`
-    Stock       int     `json:"stock" binding:"gte=0"`
-    CategoryID  uint    `json:"category_id" binding:"required"`
-}
-
-type UpdateProductRequest struct {
-    Name        string  `json:"name" binding:"omitempty,min=3,max=255"`
-    Description string  `json:"description"`
-    Price       float64 `json:"price" binding:"omitempty,gt=0"`
-    Stock       int     `json:"stock" binding:"omitempty,gte=0"`
-    CategoryID  uint    `json:"category_id" binding:"omitempty"`
-    IsActive    bool    `json:"is_active"`
-}
-
-type ProductResponse struct {
-    ID          uint      `json:"id"`
-    Name        string    `json:"name"`
-    Description string    `json:"description"`
-    Price       float64   `json:"price"`
-    Stock       int       `json:"stock"`
-    CategoryID  uint      `json:"category_id"`
-    Category    string    `json:"category"`
-    IsActive    bool      `json:"is_active"`
-    CreatedAt   time.Time `json:"created_at"`
+    Name  string  `json:"name" binding:"required,min=3,max=255"`
+    Price float64 `json:"price" binding:"required,gt=0"`
 }
 ```
 
-#### Step 3: Create Repository
+#### Step 3: Implement the repository (`repository.go`)
 ```go
-// File: internal/domain/repositories/product_repo.go
-package repositories
+// File: internal/modules/product/repository.go
+package product
 
-import (
-    "github.com/your-org/project/internal/adapters/database"
-    "github.com/your-org/project/internal/domain/models"
-    "github.com/your-org/project/pkg/logger"
-)
+import "gorm.io/gorm"
 
-func CreateProduct(product *models.Product) error {
-    if err := database.DB.Create(product).Error; err != nil {
-        logger.Errorf("failed to create product: %v", err)
-        return err
-    }
-    return nil
+type Repository struct {
+    db *gorm.DB
 }
 
-func GetProductByID(id uint) (*models.Product, error) {
-    var product models.Product
-    if err := database.DB.
-        Preload("Category").
-        Where("id = ?", id).
-        First(&product).Error; err != nil {
-        logger.Errorf("failed to get product %d: %v", id, err)
-        return nil, err
-    }
-    return &product, nil
-}
+func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 
-func UpdateProduct(product *models.Product) error {
-    if err := database.DB.Save(product).Error; err != nil {
-        logger.Errorf("failed to update product: %v", err)
-        return err
-    }
-    return nil
-}
+func (r *Repository) Create(p *Product) error { return r.db.Create(p).Error }
 
-func DeleteProduct(id uint) error {
-    if err := database.DB.Delete(&models.Product{}, id).Error; err != nil {
-        logger.Errorf("failed to delete product: %v", err)
-        return err
-    }
-    return nil
-}
-
-func ListProducts(page, pageSize int, filters map[string]interface{}) ([]*models.Product, int64, error) {
-    var products []*models.Product
-    var total int64
-
-    query := database.DB.Model(&models.Product{}).Preload("Category")
-
-    // Apply filters
-    if categoryID, ok := filters["category_id"]; ok {
-        query = query.Where("category_id = ?", categoryID)
-    }
-    if isActive, ok := filters["is_active"]; ok {
-        query = query.Where("is_active = ?", isActive)
-    }
-
-    // Count total
-    query.Count(&total)
-
-    // Paginate
-    offset := (page - 1) * pageSize
-    if err := query.Offset(offset).Limit(pageSize).Find(&products).Error; err != nil {
-        return nil, 0, err
-    }
-
-    return products, total, nil
+func (r *Repository) List() ([]*Product, error) {
+    var list []*Product
+    return list, r.db.Find(&list).Error
 }
 ```
 
-#### Step 4: Create Service
+#### Step 4: Implement the service (`service.go`) — define the `repository` interface here
 ```go
-// File: internal/app/services/product_service.go
-package services
+// File: internal/modules/product/service.go
+package product
 
 import (
+    "context"
     "fmt"
 
-    "github.com/your-org/project/internal/app/dto"
-    "github.com/your-org/project/internal/domain/models"
-    "github.com/your-org/project/internal/domain/repositories"
-    "github.com/your-org/project/pkg/logger"
-    "github.com/your-org/project/pkg/types"
+    "github.com/0xdiaz/gin-boilerplate/pkg/logger"
 )
 
-type ProductService struct{}
-
-func NewProductService() *ProductService {
-    return &ProductService{}
+// repository is the data-access contract this service needs (consumer-defined).
+type repository interface {
+    Create(p *Product) error
+    List() ([]*Product, error)
 }
 
-func (s *ProductService) CreateProduct(req *dto.CreateProductRequest) (*models.Product, error) {
-    // 1. Validate business rules
-    if err := s.validateProduct(req); err != nil {
-        return nil, fmt.Errorf("validation failed: %w", err)
-    }
-
-    // 2. Check category exists
-    category, err := repositories.GetCategoryByID(req.CategoryID)
-    if err != nil {
-        return nil, fmt.Errorf("invalid category: %w", err)
-    }
-
-    // 3. Build product
-    product := &models.Product{
-        Name:        req.Name,
-        Description: req.Description,
-        Price:       req.Price,
-        Stock:       req.Stock,
-        CategoryID:  req.CategoryID,
-        IsActive:    true,
-    }
-
-    // 4. Save product
-    if err := repositories.CreateProduct(product); err != nil {
-        logger.Errorf("failed to create product: %v", err)
-        return nil, fmt.Errorf("failed to create product: %w", err)
-    }
-
-    logger.Infof("Product created: ID=%d, Name=%s", product.ID, product.Name)
-    return product, nil
+type Service struct {
+    repo repository
 }
 
-func (s *ProductService) GetProductByID(id uint) (*models.Product, error) {
-    product, err := repositories.GetProductByID(id)
-    if err != nil {
-        return nil, types.ErrNotFound
-    }
-    return product, nil
-}
+func NewService(repo repository) *Service { return &Service{repo: repo} }
 
-func (s *ProductService) UpdateProduct(id uint, req *dto.UpdateProductRequest) (*models.Product, error) {
-    // 1. Get existing product
-    product, err := repositories.GetProductByID(id)
-    if err != nil {
-        return nil, types.ErrNotFound
-    }
-
-    // 2. Update fields
-    if req.Name != "" {
-        product.Name = req.Name
-    }
-    if req.Description != "" {
-        product.Description = req.Description
-    }
-    if req.Price > 0 {
-        product.Price = req.Price
-    }
-    if req.Stock >= 0 {
-        product.Stock = req.Stock
-    }
-    if req.CategoryID > 0 {
-        product.CategoryID = req.CategoryID
-    }
-    product.IsActive = req.IsActive
-
-    // 3. Save
-    if err := repositories.UpdateProduct(product); err != nil {
-        return nil, fmt.Errorf("failed to update product: %w", err)
-    }
-
-    return product, nil
-}
-
-func (s *ProductService) DeleteProduct(id uint) error {
-    // Check exists
-    _, err := repositories.GetProductByID(id)
-    if err != nil {
-        return types.ErrNotFound
-    }
-
-    // Delete
-    if err := repositories.DeleteProduct(id); err != nil {
-        return fmt.Errorf("failed to delete product: %w", err)
-    }
-
-    logger.Infof("Product deleted: ID=%d", id)
-    return nil
-}
-
-// Private helper
-func (s *ProductService) validateProduct(req *dto.CreateProductRequest) error {
+func (s *Service) Create(ctx context.Context, req *CreateProductRequest) (*Product, error) {
+    ctx, start := logger.LogStart(ctx, "product.Service.Create")
     if req.Price <= 0 {
-        return fmt.Errorf("price must be greater than 0")
+        err := fmt.Errorf("price must be greater than 0")
+        logger.LogFinish(ctx, "product.Service.Create", err, start)
+        return nil, err
     }
-    if req.Stock < 0 {
-        return fmt.Errorf("stock cannot be negative")
-    }
-    return nil
+    p := &Product{Name: req.Name, Price: req.Price}
+    err := s.repo.Create(p)
+    logger.LogFinish(ctx, "product.Service.Create", err, start)
+    return p, err
+}
+
+func (s *Service) List(ctx context.Context) ([]*Product, error) {
+    ctx, start := logger.LogStart(ctx, "product.Service.List")
+    list, err := s.repo.List()
+    logger.LogFinish(ctx, "product.Service.List", err, start)
+    return list, err
 }
 ```
 
-#### Step 5: Create Controller
+#### Step 5: Implement the handler (`handler.go`) — define the `service` interface here
 ```go
-// File: internal/app/controllers/product_controller.go
-package controllers
+// File: internal/modules/product/handler.go
+package product
 
 import (
-    "strconv"
+    "context"
 
+    "github.com/0xdiaz/gin-boilerplate/pkg/logger"
+    "github.com/0xdiaz/gin-boilerplate/pkg/utils"
     "github.com/gin-gonic/gin"
-    "github.com/your-org/project/internal/app/dto"
-    "github.com/your-org/project/internal/app/services"
-    "github.com/your-org/project/pkg/utils"
 )
 
-type ProductController struct {
-    service *services.ProductService
+// service is the business contract this handler needs (consumer-defined).
+type service interface {
+    Create(ctx context.Context, req *CreateProductRequest) (*Product, error)
+    List(ctx context.Context) ([]*Product, error)
 }
 
-func NewProductController(service *services.ProductService) *ProductController {
-    return &ProductController{service: service}
+type Handler struct {
+    svc service
 }
 
-// List handles GET /api/products
-func (ctrl *ProductController) List(c *gin.Context) {
-    page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-    pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+func NewHandler(svc service) *Handler { return &Handler{svc: svc} }
 
-    products, total, err := ctrl.service.ListProducts(page, pageSize)
-    if err != nil {
-        utils.InternalServerError(c, err, "Failed to list products")
-        return
-    }
-
-    response := map[string]interface{}{
-        "products":    products,
-        "page":        page,
-        "page_size":   pageSize,
-        "total":       total,
-        "total_pages": (total + int64(pageSize) - 1) / int64(pageSize),
-    }
-
-    utils.Ok(c, response, "Products retrieved successfully")
-}
-
-// Get handles GET /api/products/:id
-func (ctrl *ProductController) Get(c *gin.Context) {
-    id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-    if err != nil {
-        utils.BadRequest(c, err, "Invalid product ID")
-        return
-    }
-
-    product, err := ctrl.service.GetProductByID(uint(id))
-    if err != nil {
-        utils.NotFound(c, err, "Product not found")
-        return
-    }
-
-    utils.Ok(c, product, "Product retrieved successfully")
-}
-
-// Create handles POST /api/products
-func (ctrl *ProductController) Create(c *gin.Context) {
-    var req dto.CreateProductRequest
+func (h *Handler) Create(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "product.Handler.Create")
+    var req CreateProductRequest
     if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
+        logger.LogFinish(ctx, "product.Handler.Create", err, start)
+        utils.BadRequest(c, err, "Invalid request data")
         return
     }
-
-    product, err := ctrl.service.CreateProduct(&req)
+    p, err := h.svc.Create(ctx, &req)
     if err != nil {
+        logger.LogFinish(ctx, "product.Handler.Create", err, start)
         utils.InternalServerError(c, err, "Failed to create product")
         return
     }
-
-    utils.Created(c, product, "Product created successfully")
+    logger.LogFinish(ctx, "product.Handler.Create", nil, start)
+    utils.Created(c, p, "Product created successfully")
 }
 
-// Update handles PUT /api/products/:id
-func (ctrl *ProductController) Update(c *gin.Context) {
-    id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (h *Handler) List(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "product.Handler.List")
+    list, err := h.svc.List(ctx)
     if err != nil {
-        utils.BadRequest(c, err, "Invalid product ID")
+        logger.LogFinish(ctx, "product.Handler.List", err, start)
+        utils.InternalServerError(c, err, "Failed to list products")
         return
     }
-
-    var req dto.UpdateProductRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
-        return
-    }
-
-    product, err := ctrl.service.UpdateProduct(uint(id), &req)
-    if err != nil {
-        utils.InternalServerError(c, err, "Failed to update product")
-        return
-    }
-
-    utils.Ok(c, product, "Product updated successfully")
-}
-
-// Delete handles DELETE /api/products/:id
-func (ctrl *ProductController) Delete(c *gin.Context) {
-    id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-    if err != nil {
-        utils.BadRequest(c, err, "Invalid product ID")
-        return
-    }
-
-    if err := ctrl.service.DeleteProduct(uint(id)); err != nil {
-        utils.InternalServerError(c, err, "Failed to delete product")
-        return
-    }
-
-    utils.NoContent(c)
+    logger.LogFinish(ctx, "product.Handler.List", nil, start)
+    utils.Ok(c, list, "Products retrieved successfully")
 }
 ```
 
-#### Step 6: Register Routes
+#### Step 6: Wire it (`module.go`)
 ```go
-// File: internal/app/routers/index.go
-func RegisterRoutes(router *gin.Engine) {
-    // ... existing routes ...
+// File: internal/modules/product/module.go
+package product
 
-    // Initialize product dependencies
-    productService := services.NewProductService()
-    productController := controllers.NewProductController(productService)
+import (
+    "context"
 
-    // Register product routes
-    api := router.Group("/api")
-    api.Use(middlewares.AuthMiddleware()) // Protected routes
-    {
-        products := api.Group("/products")
-        {
-            products.GET("", productController.List)
-            products.GET("/:id", productController.Get)
-            products.POST("", productController.Create)
-            products.PUT("/:id", productController.Update)
-            products.DELETE("/:id", productController.Delete)
-        }
+    "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
+)
+
+type API interface {
+    List(ctx context.Context) ([]*Product, error)
+}
+
+type Module struct {
+    svc     *Service
+    handler *Handler
+}
+
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))
+    return &Module{svc: svc, handler: NewHandler(svc)}
+}
+
+func (m *Module) Name() string  { return "product" }
+func (m *Module) Models() []any { return []any{&Product{}} }
+
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    g := api.Group("/products")
+    g.GET("", m.handler.List)
+    g.POST("", m.handler.Create)
+}
+
+func (m *Module) API() API { return m.svc }
+```
+
+#### Step 7: Register the module — one line
+```go
+// File: internal/bootstrap/modules.go
+func buildModules(db *gorm.DB) []Module {
+    return []Module{
+        auth.New(db),
+        example.New(db),
+        product.New(db),   // ← added
     }
 }
 ```
 
-#### Step 7: Create Tests
+#### Step 8: Add a co-located test (`service_test.go`) using a fake repo
 ```go
-// File: internal/app/services/product_service_test.go
-package services_test
+// File: internal/modules/product/service_test.go
+package product
 
-// Add comprehensive tests here
+import (
+    "context"
+    "testing"
+
+    "github.com/stretchr/testify/assert"
+)
+
+type fakeRepo struct {
+    items []*Product
+    err   error
+}
+
+func (f *fakeRepo) Create(p *Product) error      { return f.err }
+func (f *fakeRepo) List() ([]*Product, error)    { return f.items, f.err }
+
+func TestService_List(t *testing.T) {
+    svc := NewService(&fakeRepo{items: []*Product{{ID: 1, Name: "Widget"}}})
+    got, err := svc.List(context.Background())
+    assert.NoError(t, err)
+    assert.Len(t, got, 1)
+}
 ```
+
+That's it — no other file changes. Routes mount under `/api/v1/products`; migrations pick up the
+`Product` model automatically via `Module.Models()`.
 
 ---
 
 ## 12. PATTERN EXAMPLES FROM CODEBASE
 
-### 12.1 Auth Pattern (from auth_controller.go)
+### 12.1 Auth Pattern (from the `auth` module)
 
-**✅ Struct-Based Controller:**
+**✅ Handler maps domain errors and uses response utilities:**
 ```go
-type AuthController struct {
-    service *services.AuthService
-}
+// internal/modules/auth/handler.go
+func (h *Handler) Login(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "auth.Handler.Login")
 
-func NewAuthController(service *services.AuthService) *AuthController {
-    return &AuthController{service: service}
-}
-
-func (ctrl *AuthController) Login(c *gin.Context) {
-    var req dto.LoginRequest
+    var req LoginRequest
     if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
+        logger.LogFinish(ctx, "auth.Handler.Login", err, start)
+        utils.BadRequest(c, err, "Invalid request data")
         return
     }
 
-    response, err := ctrl.service.Login(&req)
+    response, err := h.service.Login(ctx, &req)
     if err != nil {
-        utils.Unauthorized(c, err, err.Error())
+        if apiErr := errToAPIError(err); apiErr != nil {
+            logger.LogFinish(ctx, "auth.Handler.Login", err, start)
+            utils.RespondWithAPIError(c, apiErr) // e.g. 401 invalid credentials
+            return
+        }
+        logger.LogFinish(ctx, "auth.Handler.Login", err, start)
+        utils.InternalServerError(c, err, "Failed to authenticate user")
         return
     }
 
+    logger.LogFinish(ctx, "auth.Handler.Login", nil, start)
     utils.Ok(c, response, "Login successful")
 }
 ```
 
-**✅ Service with Business Logic:**
+**✅ Service depends on the `Repository` interface, returns sentinel errors:**
 ```go
-func (s *AuthService) Login(req *dto.LoginRequest) (*dto.LoginResponse, error) {
-    // 1. Get user
-    user, err := repositories.GetUserByEmail(req.Email)
+// internal/modules/auth/service.go
+func (s *Service) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
+    ctx, start := logger.LogStart(ctx, "auth.Service.Login")
+
+    user, err := s.userRepo.GetUserByEmail(req.Email)
     if err != nil {
-        return nil, fmt.Errorf("invalid email or password")
+        logger.LogFinish(ctx, "auth.Service.Login", err, start)
+        return nil, fmt.Errorf("authentication failed: %w", err)
+    }
+    if user == nil {
+        logger.LogFinish(ctx, "auth.Service.Login", ErrInvalidCredentials, start)
+        return nil, ErrInvalidCredentials
+    }
+    if err = s.verifyPassword(user.Password, req.Password); err != nil {
+        logger.LogFinish(ctx, "auth.Service.Login", ErrInvalidCredentials, start)
+        return nil, ErrInvalidCredentials
     }
 
-    // 2. Validate password
-    if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-        return nil, fmt.Errorf("invalid email or password")
-    }
+    accessToken, _ := s.generateToken(user)
+    refreshToken, _ := s.generateRefreshToken()
+    user.RefreshToken = refreshToken
+    _ = s.userRepo.UpdateUser(user)
 
-    // 3. Generate OTP
-    code := time.Now().Nanosecond()%900000 + 100000
-    otp := &models.OTPSession{
-        ID:        utils.GenerateRandomString(32),
-        UserID:    user.ID,
-        Email:     user.Email,
-        Code:      utils.IntToZeroPaddedString(code, 6),
-        ExpiresAt: time.Now().Add(10 * time.Minute),
-    }
-
-    // 4. Save OTP
-    if err := repositories.CreateOTPSession(otp); err != nil {
-        return nil, fmt.Errorf("could not create OTP session")
-    }
-
-    // 5. Send email
-    go s.sendEmailOTP(otp.Code, user.Email)
-
-    return &dto.LoginResponse{
-        OTPToken: otp.ID,
-        RoleID:   user.UserRoles.RoleID,
-        Role:     string(user.UserRoles.Role.Name),
+    logger.LogFinish(ctx, "auth.Service.Login", nil, start)
+    return &AuthResponse{
+        User:         UserResponse{ID: user.ID, Name: user.Name, Email: user.Email},
+        AccessToken:  accessToken,
+        RefreshToken: refreshToken,
+        TokenType:    "Bearer",
     }, nil
 }
 ```
 
-### 12.2 Client Management Pattern (from client_controller.go)
-
-**Complete CRUD Implementation:**
+**✅ The module exposes its guard and contract to other modules:**
 ```go
-type ClientController struct {
-    service *services.ClientService
+// internal/modules/auth/module.go
+func (m *Module) Middleware() gin.HandlerFunc { return authMiddleware(m.svc) } // JWT guard
+func (m *Module) Auth() Servicer              { return m.svc }                 // token validation, etc.
+```
+
+### 12.2 DataTable Pattern (from the `example` module)
+
+The example module shows server-side DataTables: the repository runs the query, the service wraps
+it in a trace span, and the handler renders it.
+
+```go
+// internal/modules/example/repository.go
+func (r *Repository) Datatables(c *gin.Context) (interface{}, error) {
+    var rows []*Example
+    return datatables.OfReturn(
+        c,
+        r.db.Model(&Example{}),
+        &rows,
+        []string{"id", "data"},
+        map[string]string{"id": "id", "data": "data"},
+        datatables.NewOptions().WithIndex("DT_RowIndex", false),
+    )
 }
 
-func NewClientController(service *services.ClientService) *ClientController {
-    return &ClientController{service: service}
-}
-
-// List with DataTable support
-func (ctrl *ClientController) List(c *gin.Context) {
-    var dtRequest datatable.DataTableRequest
-    if err := c.ShouldBindJSON(&dtRequest); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
+// internal/modules/example/handler.go
+func (h *Handler) Datatables(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "example.Handler.Datatables")
+    data, err := h.svc.Datatables(ctx, c)
+    if err != nil {
+        logger.LogFinish(ctx, "example.Handler.Datatables", err, start)
+        utils.InternalServerError(c, err, "Failed to retrieve data")
         return
     }
-
-    response := ctrl.service.GetClientDataTable(&dtRequest)
-    utils.Ok(c, response, "OK")
+    dt, ok := data.(dto.Datatables)
+    if !ok {
+        utils.InternalServerError(c, nil, "Failed to render data")
+        return
+    }
+    logger.LogFinish(ctx, "example.Handler.Datatables", nil, start)
+    datatables.JSON(c, dt)
 }
-
-// Standard CRUD methods
-func (ctrl *ClientController) Get(c *gin.Context) { }
-func (ctrl *ClientController) Create(c *gin.Context) { }
-func (ctrl *ClientController) Update(c *gin.Context) { }
-func (ctrl *ClientController) Delete(c *gin.Context) { }
 ```
+
+Routes are mounted by the module: `api.GET("/examples", ...)` and `api.GET("/datatables", ...)`.
 
 ---
 
 ## 13. ANTI-PATTERNS TO AVOID
 
-### 13.1 ❌ Business Logic in Controller
+### 13.1 ❌ Business Logic in Handler
 
 **WRONG:**
 ```go
-func CreateUser(c *gin.Context) {
-    var req dto.CreateUserRequest
+func (h *Handler) Register(c *gin.Context) {
+    var req RegisterRequest
     c.ShouldBindJSON(&req)
 
-    // ❌ Password hashing in controller!
-    hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(req.Password))
+    // ❌ Password hashing in the handler!
+    hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 
-    // ❌ Direct database access!
-    user := &models.User{
-        Name:     req.Name,
-        Email:    req.Email,
-        Password: string(hashedPassword),
-    }
-    database.DB.Create(user)
+    // ❌ Building & persisting the model in the HTTP layer!
+    user := &User{Name: req.Name, Email: req.Email, Password: string(hashed)}
+    h.db.Create(user)
 
-    c.JSON(200, user)
+    c.JSON(200, user) // ❌ hand-written response
 }
 ```
 
 **CORRECT:**
 ```go
-func (ctrl *UserController) Create(c *gin.Context) {
-    var req dto.CreateUserRequest
+func (h *Handler) Register(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "auth.Handler.Register")
+    var req RegisterRequest
     if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, err, "Invalid request")
+        logger.LogFinish(ctx, "auth.Handler.Register", err, start)
+        utils.BadRequest(c, err, "Invalid request data")
         return
     }
-
-    // ✅ Delegate to service
-    user, err := ctrl.service.CreateUser(&req)
+    // ✅ Delegate everything to the service
+    response, err := h.service.Register(ctx, &req)
     if err != nil {
-        utils.InternalServerError(c, err, "Failed to create user")
+        if apiErr := errToAPIError(err); apiErr != nil {
+            utils.RespondWithAPIError(c, apiErr)
+            return
+        }
+        utils.InternalServerError(c, err, "Failed to register user")
         return
     }
-
-    utils.Created(c, user, "User created")
+    logger.LogFinish(ctx, "auth.Handler.Register", nil, start)
+    utils.Created(c, response, "User registered successfully")
 }
 ```
 
@@ -2445,12 +1970,12 @@ func (ctrl *UserController) Create(c *gin.Context) {
 
 **WRONG:**
 ```go
-func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
-    // ❌ Direct DB access in service!
-    var existingUser models.User
-    database.DB.Where("email = ?", req.Email).First(&existingUser)
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) error {
+    // ❌ Direct DB access in the service — bypasses the repository, untestable, hidden dependency!
+    var existing User
+    database.DB.Where("email = ?", req.Email).First(&existing)
 
-    user := &models.User{...}
+    user := &User{ /* ... */ }
     database.DB.Create(user)
     return nil
 }
@@ -2458,51 +1983,42 @@ func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
 
 **CORRECT:**
 ```go
-func (s *UserService) CreateUser(req *dto.CreateUserRequest) error {
-    // ✅ Use repository
-    existing, _ := repositories.GetUserByEmail(req.Email)
-    if existing != nil {
-        return fmt.Errorf("email already exists")
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) error {
+    // ✅ Go through the injected repository interface
+    existing, err := s.userRepo.GetUserByEmail(req.Email)
+    if err != nil {
+        return fmt.Errorf("failed to check email: %w", err)
     }
-
-    user := &models.User{...}
-    return repositories.CreateUser(user)
+    if existing != nil {
+        return ErrEmailAlreadyExists
+    }
+    return s.userRepo.CreateUser(&User{ /* ... */ })
 }
 ```
 
 ---
 
-### 13.3 ❌ Standalone Controller Functions
+### 13.3 ❌ Standalone Handler Functions
 
 **WRONG:**
 ```go
-// ❌ Old pattern - standalone function
+// ❌ Standalone function, no struct, no injected dependency
 func Login(c *gin.Context) {
-    // Direct implementation
+    // direct implementation, reaches for globals
 }
-
-// Router registration
-route.POST("/login", Login)
+api.POST("/auth/login", Login)
 ```
 
 **CORRECT:**
 ```go
-// ✅ Struct-based controller
-type AuthController struct {
-    service *services.AuthService
-}
+// ✅ Struct handler with an injected, consumer-defined service interface
+type Handler struct{ service Servicer }
+func NewHandler(service Servicer) *Handler { return &Handler{service: service} }
+func (h *Handler) Login(c *gin.Context) { /* ... */ }
 
-func NewAuthController(service *services.AuthService) *AuthController {
-    return &AuthController{service: service}
-}
-
-func (ctrl *AuthController) Login(c *gin.Context) {
-    // Implementation
-}
-
-// Router registration
-authController := NewAuthController(authService)
-route.POST("/login", authController.Login)
+// Wired in module.go, mounted in RegisterRoutes:
+g := api.Group("/auth")
+g.POST("/login", m.handler.Login)
 ```
 
 ---
@@ -2511,88 +2027,99 @@ route.POST("/login", authController.Login)
 
 **WRONG:**
 ```go
-// ❌ One service doing everything
-type AppService struct {}
-
-func (s *AppService) CreateUser() error { }
-func (s *AppService) ProcessPayment() error { }
-func (s *AppService) SendEmail() error { }
-func (s *AppService) GenerateReport() error { }
-func (s *AppService) CalculateTax() error { }
+// ❌ One service (or one module) doing everything
+type AppService struct{}
+func (s *AppService) CreateUser() error      { /* ... */ }
+func (s *AppService) ProcessPayment() error  { /* ... */ }
+func (s *AppService) SendEmail() error       { /* ... */ }
+func (s *AppService) GenerateReport() error  { /* ... */ }
 // ... 50 more methods
 ```
 
 **CORRECT:**
 ```go
-// ✅ Separate services with single responsibility
-type UserService struct {}
-type PaymentService struct {}
-type EmailService struct {}
-type ReportService struct {}
-type TaxService struct {}
+// ✅ Separate modules, each a vertical slice with a single responsibility
+internal/modules/auth/        // Service: authentication
+internal/modules/payments/    // Service: payment processing
+internal/modules/reports/     // Service: reporting
 ```
+Each module talks to others only through their public `API` / `Servicer` interface (see §13.5).
 
 ---
 
-### 13.5 ❌ Circular Dependencies
+### 13.5 ❌ Reaching Into Another Module's Internals
 
 **WRONG:**
 ```go
-// pkg/enums/constants.go
-import "internal/app/dto"  // ❌ pkg importing internal!
+// ❌ Importing another module's unexported types / repository directly
+import "github.com/0xdiaz/gin-boilerplate/internal/modules/auth"
 
-var NotificationMapping = map[string]dto.NotificationRoute{...}
+func (s *Service) doThing() {
+    repo := auth.NewRepository(s.db)   // ❌ using auth's data layer from outside
+    user, _ := repo.GetUserByEmail("x@y.com")
+    _ = user
+}
 ```
 
 **CORRECT:**
 ```go
-// internal/app/services/notification_router.go
-import "internal/app/dto"  // ✅ services can import dto
+// ✅ Depend on auth's PUBLIC interface, injected through the constructor in buildModules()
+type Service struct {
+    auth auth.Servicer // public contract only
+}
+func NewService(repo repository, auth auth.Servicer) *Service {
+    return &Service{ /* repo, */ auth: auth}
+}
 
-var NotificationMapping = map[string]dto.NotificationRoute{...}
+// internal/bootstrap/modules.go
+authMod := auth.New(db)
+mine := mymodule.New(db, authMod.Auth())
 ```
+If a module must later become its own service, this in-process interface call becomes a network
+(REST + HMAC) call and nothing else changes.
 
 ---
 
 ## 🎯 SUMMARY: Key Takeaways
 
 ### ✅ DO:
-1. **Follow Clean Architecture** - Layers have clear responsibilities
-2. **Use Struct-Based Controllers** - Never standalone functions
-3. **Keep Controllers Thin** - Only HTTP handling (<50 lines)
-4. **Keep Services Fat** - All business logic goes here
-5. **Use Repositories** - Abstract all database access
-6. **Use DTOs** - Never expose models directly
-7. **Use Response Utilities** - Consistent API responses
-8. **Handle Errors Properly** - Always wrap with context
-9. **Write Tests** - Minimum 70% coverage for services
-10. **Follow Dependency Direction** - Always inward
+1. **Organize by module** — one feature = one folder = one Go package (`internal/modules/<name>/`).
+2. **Keep the vertical slice together** — `handler → service → repository → model` in one place.
+3. **Define interfaces at the consumer** — handler defines `service`, service defines `repository`.
+4. **Inject dependencies via `New(...)`** — assemble the slice once in `Module.New(db)`.
+5. **Cross modules only via public interfaces** (`Module.API()`, `auth.Servicer`), injected.
+6. **Hold the injected `*gorm.DB`** in the repository — never the `database.DB` global.
+7. **Use response utilities** (`pkg/utils`) — never hand-write `c.JSON`.
+8. **Trace every operation** — `logger.LogStart` / `logger.LogFinish` around service & handler work.
+9. **Map sentinel errors → APIError** in the handler; wrap unexpected errors with `%w`.
+10. **Co-locate tests** — fake repo, no DB (`example/service_test.go`).
 
 ### ❌ DON'T:
-1. **Business Logic in Controllers** - Move to services
-2. **Database Access in Services** - Use repositories
-3. **Standalone Controller Functions** - Use struct-based
-4. **God Services** - Split by domain
-5. **Circular Dependencies** - pkg cannot import internal
-6. **Ignore Errors** - Always handle and wrap
-7. **Hardcode Secrets** - Use environment variables
-8. **Skip Tests** - Required for all services
-9. **Large Files** - Max 300 lines per file
-10. **Large Functions** - Max 100 lines per function
+1. **Business logic in handlers** — move it to the service.
+2. **Database access in services** — go through the repository.
+3. **Standalone handler functions** — use struct handlers with injected interfaces.
+4. **God services/modules** — split by sub-domain.
+5. **Reach into another module's internals** — use its public interface.
+6. **Use the `database.DB` global in modules** — inject `*gorm.DB`.
+7. **Put the auth guard in `pkg/middleware`** — it lives in the auth module (`Module.Middleware()`).
+8. **`pkg/` importing `internal/`** — the shared kit must stay clean.
+9. **Skip tests** — co-locate a fake-backed test with every module.
+10. **Large files/functions** — split per the size limits in §5.
 
 ---
 
 **END OF DESIGN PATTERNS DOCUMENT**
 
-*Last Updated: 2025-11-08*
-*Version: 1.0*
-*Next Review: Every 3 months or after major architectural changes*
+*Last Updated: 2026-06-10*
+*Version: 2.0 (modular architecture)*
+*Source of truth for layout: [`MODULE_GUIDE.md`](./MODULE_GUIDE.md). Reference module: `internal/modules/example`.*
 
 ---
 
 ## 📚 Related Documentation
 
-- **CODING_STANDARDS.md** - Detailed coding standards and guidelines
-- **AI_AGENT_RULES.md** - Quick reference rules for AI agents
-- **README.md** - Project overview and setup instructions
-- **API_DOCUMENTATION.md** - API endpoint documentation
+- **[MODULE_GUIDE.md](./MODULE_GUIDE.md)** — Source of truth for the modular layout
+- **CODING_STANDARDS.md** — Detailed coding standards and guidelines
+- **AI_AGENT_RULES.md** — Quick reference rules for AI agents
+- **CONTRACTS.md** — Stable API & configuration contracts
+- **README.md** — Project overview and setup instructions

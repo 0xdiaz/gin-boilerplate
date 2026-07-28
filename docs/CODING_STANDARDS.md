@@ -1,32 +1,41 @@
 # Coding Standards & Guidelines
 
-**Version:** 1.0
-**Last Updated:** 2025-11-08
+**Version:** 2.0
+**Last Updated:** 2026-06-10
 **Language:** Go 1.24+
+
+> **Architecture:** This service is organized **by business module** (package-by-feature),
+> not by technical layer. The source of truth for the layout is
+> [`MODULE_GUIDE.md`](./MODULE_GUIDE.md); this document gives the coding standards that
+> apply *inside* that layout. Where older docs describe an `internal/app/...` +
+> `internal/domain/...` layered tree, MODULE_GUIDE (and this doc) override them.
 
 ---
 
 ## ⚠️ FOR AI AGENTS - READ THIS FIRST
 
-> **🚨 CRITICAL: Read [`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md) BEFORE reading this document!**
+> **🚨 CRITICAL: Read [`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md) and
+> [`MODULE_GUIDE.md`](./MODULE_GUIDE.md) BEFORE reading this document!**
 >
-> **This document is 1955 lines.** The critical rules file is 100 lines and contains NON-NEGOTIABLE patterns.
+> The critical rules file is short and contains NON-NEGOTIABLE patterns; MODULE_GUIDE
+> describes the folder layout. This document is the detailed reference.
 >
 > **Don't make the same mistake:** Skipping critical sections = Code rejected.
 
-### 🔥 Critical Sections in This Document (MUST READ)
+### 🔥 Critical Sections (MUST READ)
 
-After reading `00_AI_CRITICAL_RULES.md`, focus on these sections:
+After reading `00_AI_CRITICAL_RULES.md` and `MODULE_GUIDE.md`, focus on these sections:
 
-- **Lines 900-1100:** Struct-based Controller/Service Pattern (MANDATORY)
-- **Lines 1429-1475:** Standard Response Format (MANDATORY)
-- **Lines 1479-1584:** Response Utilities - pkg/utils/response.go (MANDATORY)
-- **Lines 840-1009:** Testing Requirements (tests/ directory structure)
+- **[1. File Organization](#1-file-organization)** — the modular (package-by-feature) layout
+- **[3. Code Structure](#3-code-structure)** — handler → service → repository, consumer-defined interfaces, cross-module calls
+- **[7. Testing Requirements](#7-testing-requirements)** — co-located tests with a fake repo
+- **[11.4 Response Utilities](#114-response-utilities)** — `pkg/utils` (MANDATORY)
+- **[11.6 Routing](#116-routing-and-module-registration)** — modules register their own routes
 
 ### 📖 How to Use This Document
 
-1. ✅ Read `00_AI_CRITICAL_RULES.md` first (100 lines)
-2. ✅ Read critical sections listed above
+1. ✅ Read `00_AI_CRITICAL_RULES.md` and `MODULE_GUIDE.md` first
+2. ✅ Read the critical sections listed above
 3. ⚠️  Skim other sections for context
 4. 📚 Use as reference when needed
 
@@ -34,74 +43,71 @@ After reading `00_AI_CRITICAL_RULES.md`, focus on these sections:
 
 ## 📋 Table of Contents
 
-> **Quick Navigation:** Use Ctrl+F with line numbers (e.g., "L1429") or search keywords
-
 ### 🔥 Critical Sections (Read First)
 
-| Section | Lines | Time | Keywords |
-|---------|-------|------|----------|
-| [1. File Organization](#1-file-organization) | L54-218 | 3 min | `300 lines`, `dto`, `enums`, `imports` |
-| → [1.5 DTO & Enum Placement](#15-dto-and-enum-placement-rules) | L132-217 | 2 min | `internal/app/dto`, `pkg/enums`, `import cycle` |
-| [5. Error Handling](#5-error-handling) | L562-711 | 3 min | `fmt.Errorf`, `%w`, `logger.Errorf` |
-| [7. Testing Requirements](#7-testing-requirements) | L863-1036 | 4 min | `tests/`, `_test`, `70%`, `coverage` |
-| [11. API Design](#11-api-design) | L1421-1953 | 8 min | `REST`, `response`, `utils.Ok`, `routes` |
-| → [11.4 Response Utilities](#114-response-utilities) | L1547-1711 | 3 min | `utils.Ok`, `utils.Created`, `utils.BadRequest` |
-| → [11.6 Router Organization](#116-router-organization) | L1727-1952 | 4 min | `Register*Routes`, `{feature}_routes.go` |
+- [1. File Organization](#1-file-organization) — `module`, `vertical slice`, `300 lines`
+  - [1.5 DTO & Constant Placement](#15-dto-and-constant-placement-rules) — `dto.go`, module-local
+- [3. Code Structure](#3-code-structure) — `handler`, `service`, `repository`, `interface`
+- [5. Error Handling](#5-error-handling) — `fmt.Errorf`, `%w`, `domain errors`, `APIError`
+- [7. Testing Requirements](#7-testing-requirements) — `co-located`, `fake repo`, `70%`, `coverage`
+- [11. API Design](#11-api-design) — `REST`, `response`, `utils.Ok`, `routes`
+  - [11.4 Response Utilities](#114-response-utilities) — `utils.Ok`, `utils.Created`, `utils.BadRequest`
+  - [11.6 Routing & Module Registration](#116-routing-and-module-registration) — `RegisterRoutes`, `buildModules`
 
 ### 📚 All Sections
 
-| # | Section | Lines | Keywords |
-|---|---------|-------|----------|
-| 1 | [File Organization](#1-file-organization) | L54-218 | `file size`, `directory`, `dto`, `enums` |
-| 1.1 | [File Size Limits](#11-file-size-limits) | L56-67 | `300 lines`, `100 lines function` |
-| 1.2 | [Directory Structure](#12-directory-structure) | L68-100 | `internal/`, `pkg/`, `cmd/` |
-| 1.3 | [File Naming](#13-file-naming) | L101-115 | `snake_case`, `_test.go`, `naming` |
-| 1.4 | [Package Organization](#14-package-organization) | L116-131 | `package`, `organization` |
-| 1.5 | [DTO & Enum Placement](#15-dto-and-enum-placement-rules) | L132-217 | `dto`, `enums`, `import cycle` |
-| 2 | [Naming Conventions](#2-naming-conventions) | L219-328 | `camelCase`, `PascalCase`, `naming` |
-| 3 | [Code Structure](#3-code-structure) | L329-435 | `package`, `import`, `struct` |
-| 4 | [Function Guidelines](#4-function-guidelines) | L436-561 | `function size`, `parameters`, `return` |
-| 5 | [Error Handling](#5-error-handling) | L562-711 | `error`, `wrapping`, `logging` |
-| 6 | [Documentation](#6-documentation) | L712-862 | `comment`, `godoc`, `docs` |
-| 7 | [Testing Requirements](#7-testing-requirements) | L863-1036 | `test`, `tests/`, `coverage`, `70%` |
-| 8 | [Logging Standards](#8-logging-standards) | L1037-1125 | `logger`, `Infof`, `Errorf`, `Warnf` |
-| 9 | [Security Guidelines](#9-security-guidelines) | L1126-1263 | `validation`, `SQL injection`, `XSS` |
-| 10 | [Database Access](#10-database-access) | L1264-1420 | `GORM`, `model`, `migration` |
-| 11 | [API Design](#11-api-design) | L1421-1953 | `REST`, `API`, `response`, `routes` |
-| 11.1 | [RESTful Conventions](#111-restful-conventions) | L1423-1446 | `REST`, `HTTP methods`, `endpoints` |
-| 11.2 | [HTTP Status Codes](#112-http-status-codes) | L1447-1493 | `200`, `404`, `500`, `status` |
-| 11.3 | [Response Format](#113-response-format) | L1494-1546 | `success`, `message`, `data`, `errors` |
-| 11.4 | [Response Utilities](#114-response-utilities) | L1547-1711 | `utils.Ok`, `utils.Created`, `HandleErrors` |
-| 11.5 | [API Versioning](#115-api-versioning) | L1712-1726 | `v1`, `v2`, `versioning` |
-| 11.6 | [Router Organization](#116-router-organization) | L1727-1952 | `routes`, `Register*Routes`, `index.go` |
-| 12 | [Configuration](#12-configuration) | L1955-2035 | `config`, `env`, `.env` |
-| 13 | [Forbidden Practices](#13-forbidden-practices) | L2036-2118 | `panic`, `global`, `anti-pattern` |
-| 14 | [Code Review Checklist](#14-code-review-checklist) | L2119-2171 | `checklist`, `review`, `validation` |
-| 15 | [AI Agent Rules](#15-ai-agent-specific-rules) | L2172-2221 | `AI`, `agent`, `automation` |
-| 16 | [Resources](#16-resources) | L2222-2226 | `links`, `references`, `docs` |
+| # | Section | Keywords |
+|---|---------|----------|
+| 1 | [File Organization](#1-file-organization) | `file size`, `module`, `dto`, `vertical slice` |
+| 1.1 | [File Size Limits](#11-file-size-limits) | `300 lines`, `100 lines function` |
+| 1.2 | [Directory Structure](#12-directory-structure) | `internal/modules`, `pkg/`, `bootstrap` |
+| 1.3 | [File Naming](#13-file-naming) | `snake_case`, `_test.go`, `naming` |
+| 1.4 | [Package Organization](#14-package-organization) | `package`, `one module = one package` |
+| 1.5 | [DTO & Constant Placement](#15-dto-and-constant-placement-rules) | `dto`, `constants`, `module-local` |
+| 2 | [Naming Conventions](#2-naming-conventions) | `camelCase`, `PascalCase`, `naming` |
+| 3 | [Code Structure](#3-code-structure) | `handler`, `service`, `repository`, `interface` |
+| 4 | [Function Guidelines](#4-function-guidelines) | `function size`, `parameters`, `return` |
+| 5 | [Error Handling](#5-error-handling) | `error`, `wrapping`, `domain errors`, `APIError` |
+| 6 | [Documentation](#6-documentation) | `comment`, `godoc`, `docs` |
+| 7 | [Testing Requirements](#7-testing-requirements) | `test`, `co-located`, `fake repo`, `70%` |
+| 8 | [Logging Standards](#8-logging-standards) | `logger`, `LogStart`, `LogFinish`, `request_id` |
+| 9 | [Security Guidelines](#9-security-guidelines) | `validation`, `SQL injection`, `bcrypt` |
+| 10 | [Database Access](#10-database-access) | `GORM`, `model`, `migration`, `DI` |
+| 11 | [API Design](#11-api-design) | `REST`, `API`, `response`, `routes` |
+| 11.1 | [RESTful Conventions](#111-restful-conventions) | `REST`, `HTTP methods`, `endpoints` |
+| 11.2 | [HTTP Status Codes](#112-http-status-codes) | `200`, `404`, `500`, `status` |
+| 11.3 | [Response Format](#113-response-format) | `success`, `message`, `data`, `errors` |
+| 11.4 | [Response Utilities](#114-response-utilities) | `utils.Ok`, `utils.Created`, `RespondWithAPIError` |
+| 11.5 | [API Versioning](#115-api-versioning) | `v1`, `v2`, `versioning` |
+| 11.6 | [Routing & Module Registration](#116-routing-and-module-registration) | `RegisterRoutes`, `buildModules` |
+| 12 | [Configuration](#12-configuration) | `config`, `env`, `.env` |
+| 13 | [Forbidden Practices](#13-forbidden-practices) | `panic`, `global`, `anti-pattern` |
+| 14 | [Code Review Checklist](#14-code-review-checklist) | `checklist`, `review`, `validation` |
+| 15 | [AI Agent Rules](#15-ai-agent-specific-rules) | `AI`, `agent`, `automation` |
+| 16 | [Resources](#16-resources) | `links`, `references`, `docs` |
 
 ### 🎯 Quick Lookups by Task
 
-**Creating Controllers/Services:**
-- L132-157: DTO Placement
-- L1547-1711: Response Utilities (MUST use)
-- See: `DESIGN_PATTERNS.md` L900-1016
+**Creating a new module (handler/service/repository):**
+- [3. Code Structure](#3-code-structure) — consumer-defined interfaces + constructor injection
+- [11.4 Response Utilities](#114-response-utilities) — MUST use
+- See: `MODULE_GUIDE.md` — "How to add a new module"
 
-**Adding Routes:**
-- L1727-1952: Router Organization
-- L1423-1446: RESTful Conventions
+**Adding routes:**
+- [11.6 Routing & Module Registration](#116-routing-and-module-registration)
+- [11.1 RESTful Conventions](#111-restful-conventions)
 
-**Writing Tests:**
-- L863-1036: Testing Requirements
-- L56-67: File Size Limits
+**Writing tests:**
+- [7. Testing Requirements](#7-testing-requirements)
+- [1.1 File Size Limits](#11-file-size-limits)
 
-**Error Handling:**
-- L562-711: Error Handling Patterns
-- L1037-1125: Logging Standards
+**Error handling:**
+- [5. Error Handling](#5-error-handling)
+- [8. Logging Standards](#8-logging-standards)
 
-**Database Models:**
-- L1264-1420: Database Access
-- See: `DESIGN_PATTERNS.md` L1017-1085
+**Database models:**
+- [10. Database Access](#10-database-access)
+- See: `MODULE_GUIDE.md` — "A module owns its tables"
 
 ---
 
@@ -116,196 +122,206 @@ After reading `00_AI_CRITICAL_RULES.md`, focus on these sections:
 ```
 
 **Action when exceeding:**
-- Split into multiple focused files
-- **Subfolder required when splitting:** When one feature (service, controller, or repository) is split into more than one file, move **all** files for that feature into a new subfolder named after the feature. The parent folder should only contain features that are still single-file. Example: `auth_service.go` + `auth_service_tokens.go` → move to `services/auth/auth_service.go` + `services/auth/auth_service_tokens.go` (package `auth`). This keeps split features grouped and the structure clean.
-- Another example: `controllers/user_controller.go` + `controllers/user_validation.go` → `controllers/user/user_controller.go` + `controllers/user/user_validation.go` (package `user`).
+- Split into multiple focused files **within the same module package**.
+- **No subfolders.** When one part of a module (service, handler, or repository) grows past the limit, add another file in the same module folder, keeping the same package. Example: the auth module splits its service into `internal/modules/auth/service.go` + `internal/modules/auth/service_tokens.go` — both `package auth`, no nested folder.
+- The module *is* the feature folder; a split file does not get its own subfolder.
 
 ### 1.2 Directory Structure
+
+Code is organized **by business module** (package-by-feature), not by technical layer. A
+module owns its full vertical slice (`handler → service → repository → model`) in one
+package. See [`MODULE_GUIDE.md`](./MODULE_GUIDE.md) for the canonical version.
 
 **MUST follow this structure:**
 
 ```
-project/
-├── cmd/                        # Commands (main applications)
-│   ├── migrate/               # Database migrations
-│   └── seeder/                # Data seeding
-├── internal/                   # Private application code
-│   ├── adapters/              # External adapters (DB, cache, etc)
-│   ├── app/
-│   │   ├── controllers/       # HTTP handlers (thin layer)
-│   │   ├── dto/               # Data Transfer Objects
-│   │   ├── middlewares/       # Gin middlewares
-│   │   ├── routers/           # Route definitions
-│   │   └── services/          # Business logic; split features use subfolder (e.g. services/auth/)
-│   └── domain/
-│       ├── models/            # Database entities
-│       └── repositories/      # Data access layer
-├── pkg/                       # Public reusable packages
-│   ├── config/               # Configuration management
-│   ├── enums/                # Enumerations
-│   ├── logger/               # Logging infrastructure
-│   ├── types/                # Shared types
-│   └── utils/                # Utility functions
-├── tests/                    # Test files (NEW - REQUIRED)
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/
-└── main.go                   # Application entry point
+.
+├── main.go                      # 3 lines: bootstrap.Run()
+├── internal/
+│   ├── bootstrap/               # the ONLY per-service wiring
+│   │   ├── bootstrap.go         #   Run(): config → db → modules → migrate → serve → shutdown
+│   │   ├── modules.go           #   Module interface + buildModules() (the list of modules)
+│   │   ├── server.go            #   gin engine + global middleware + route mounting
+│   │   └── swagger.go           #   OpenAPI/Swagger UI (debug only)
+│   ├── migrations/              # service-specific schema
+│   │   ├── migration.go         #   Run(db, models) — AutoMigrate
+│   │   └── sql/                 #   versioned SQL (production path)
+│   └── modules/                 # ← business modules (work happens here)
+│       ├── example/             #   THE reference module — copy this to make a new one
+│       │   ├── model.go         #     GORM model(s) the module owns
+│       │   ├── dto.go           #     request/response types (optional)
+│       │   ├── repository.go    #     data access (holds *gorm.DB, no globals)
+│       │   ├── service.go       #     business logic (defines the repo interface it needs)
+│       │   ├── handler.go       #     HTTP layer (defines the service interface it needs)
+│       │   ├── module.go        #     New(db), Name(), Models(), RegisterRoutes(), public API()
+│       │   └── service_test.go  #     co-located test (no DB needed — uses a fake repo)
+│       ├── auth/                #   real module: JWT auth, exposes Middleware() to others
+│       └── health/              #   system module: mounts /health, /metrics at ROOT
+├── pkg/                         # ← cross-cutting "kit"; MUST never import from internal/
+│   ├── config/                  #   configuration (viper-backed)
+│   ├── logger/                  #   structured logging + request-scoped tracing
+│   ├── metrics/                 #   request counters + uptime
+│   ├── types/                   #   shared response/error types
+│   ├── utils/                   #   response helpers (utils.Ok, utils.BadRequest, …)
+│   ├── middleware/              #   cors, request_id, request_log, metrics, rate_limit
+│   └── database/                #   connect + read-replica resolver
+└── internal/testsupport/        # shared test doubles/mocks imported by co-located tests
 ```
 
-#### 1.2.1 Feature Grouping for Multi-file Controllers/Services
+> **Testing layout:** unit tests are **co-located** with the code they test
+> (`foo_test.go` beside `foo.go`, default `package <pkg>_test`); test fixtures live in a
+> `testdata/` folder next to the test that uses them (Go convention). Shared mocks reusable
+> across packages live in `internal/testsupport/` (`package testsupport`); a mock used by
+> only one package is co-located there instead. There is **no root `tests/` tree** — DB /
+> external-service integration tests belong in the cross-service harness `paprika-testing`,
+> not in this repo.
+
+> **Old → new (do not use the old paths):** `internal/app/{controllers,services,dto,middlewares,routers}`
+> and `internal/domain/{models,repositories}` and `internal/adapters/database` no longer exist.
+> Everything for a feature lives in `internal/modules/<name>/`; wiring lives in
+> `internal/bootstrap/`; migrations in `internal/migrations/`; cross-cutting code in `pkg/`
+> (note: `pkg/middleware` is **singular**).
+
+#### 1.2.1 One Module = One Package = One Folder
 
 ```
-✅ MUST: If a controller or service is split into multiple files (due to the 300-line/file or 100-line/function limits), those files MUST be grouped under a single feature folder to avoid scattering.
+✅ MUST: A feature is a single package under internal/modules/<name>/ holding
+   model.go, dto.go (optional), repository.go, service.go, handler.go, module.go.
+   This is a vertical slice — do NOT spread a feature across layer folders.
 ```
 
 **Purpose:**
-- Keep files organized by feature
-- Improve navigation and code ownership
-- Avoid mixing many feature files in a flat directory
+- One person (or one AI agent) can own a module without touching others.
+- Navigation, code ownership, and the future "lift this module into its own service" cut are all trivial.
+- A module owns its tables (declared in `Module.Models()`); no cross-module foreign keys.
 
-**Examples:**
+**Example (the canonical `example` module):**
 ```
-internal/app/controllers/
-├── auth/
-│   ├── auth_controller.go
-│   ├── auth_controller_handlers.go
-│   └── auth_controller_validators.go
-├── user/
-│   ├── user_controller.go
-│   └── user_controller_helpers.go
-└── health_controller.go
-
-internal/app/services/
-├── auth/
-│   ├── auth_service.go
-│   ├── auth_service_reset.go
-│   └── auth_service_validation.go
-└── user/
-    ├── user_service.go
-    └── user_service_rules.go
+internal/modules/example/
+├── model.go         # Example (GORM model) + TableName()
+├── repository.go    # Repository{db *gorm.DB} + NewRepository(db)
+├── service.go       # Service + the `repository` interface it consumes
+├── handler.go       # Handler + the `service` interface it consumes
+├── module.go        # Module: New(db), Name(), Models(), RegisterRoutes(api), API()
+└── service_test.go  # co-located unit test using a fake repo (no DB)
 ```
 
 **Naming Rules:**
-- Folder name must be the feature: `auth/`, `user/`, `order/`
-- All files in the folder use `snake_case` and keep a consistent `package` (`package controllers` or `package services`)
-- Avoid deep nested folders unless necessary (max 1 level for feature grouping)
+- Folder name *is* the module/sub-domain: `auth/`, `members/`, `accounts/`, `balance/`.
+- All files use `snake_case`; every file in the folder shares one package (`package <name>`).
+- No nested feature subfolders inside a module — split into more files in the same folder instead.
 
 ### 1.3 File Naming
 
 **Rules:**
 ```go
 ✅ CORRECT:
-- user_service.go          (snake_case)
-- transaction_repo.go      (snake_case, abbreviated)
-- api_client.go            (lowercase acronyms in filename)
+- service.go               (snake_case; the module's business logic)
+- repository.go            (snake_case)
+- service_tokens.go        (snake_case; a second service file in the same module)
+- service_test.go          (co-located test)
 
 ❌ WRONG:
-- UserService.go           (PascalCase not allowed)
-- user-service.go          (kebab-case not allowed)
-- userService.go           (camelCase not allowed)
+- Service.go               (PascalCase not allowed)
+- service-tokens.go        (kebab-case not allowed)
+- serviceTokens.go         (camelCase not allowed)
 ```
+
+Inside a module the standard files are `model.go`, `dto.go`, `repository.go`,
+`service.go`, `handler.go`, `module.go`. When a file outgrows the size limit, append a
+descriptive suffix (`service_tokens.go`, `repository_query.go`) in the same folder.
 
 ### 1.4 Package Organization
 
-**One package per directory:**
+**One module = one package = one directory:**
 ```go
-// ✅ CORRECT
-internal/app/services/
-    ├── user_service.go        → package services
-    ├── transaction_service.go → package services
-    └── hub_service.go         → package services
+// ✅ CORRECT — every file in the module shares the package
+internal/modules/auth/
+    ├── service.go         → package auth
+    ├── service_tokens.go  → package auth
+    ├── repository.go      → package auth
+    └── handler.go         → package auth
 
-// ❌ WRONG - multiple packages in one directory
-internal/app/
-    ├── user.go     → package users
-    └── client.go   → package clients
+// ❌ WRONG - multiple packages in one directory, or layer folders
+internal/modules/auth/
+    ├── service.go         → package service
+    └── handler.go         → package handler
 ```
 
-### 1.5 DTO and Enum Placement Rules
+### 1.5 DTO and Constant Placement Rules
 
-**CRITICAL RULES - MUST ALWAYS FOLLOW:**
+DTOs and constants are **module-local**. There is no shared `dto/` package and no
+`pkg/enums/` package — a module owns its own request/response types and its own constants.
 
 #### 1.5.1 DTOs (Data Transfer Objects)
 ```
-✅ ALL STRUCTS MUST GO TO: internal/app/dto/
+✅ DTOs LIVE IN THE MODULE'S dto.go (package <module>)
 
 Location rules:
-- Request/Response structs → dto/
-- API payload structs → dto/
-- Service-specific structs → dto/
-- Any struct used for data transfer → dto/
+- Request/Response structs → internal/modules/<name>/dto.go
+- Any struct used for data transfer at the HTTP boundary → dto.go
+- dto.go is optional: tiny modules may declare a request/response type in model.go
 
 Examples:
 ✅ CORRECT:
-internal/app/dto/
-    ├── notification_dto.go → NotificationRequest, NotificationResponse
-    ├── user_dto.go         → CreateUserRequest, UserResponse
-    ├── order_dto.go        → OrderRequest, OrderResponse
+internal/modules/auth/dto.go     → RegisterRequest, LoginRequest, AuthResponse, UserResponse
+internal/modules/health/dto.go   → HealthResponse, MetricsResponse
 
 ❌ WRONG:
-internal/app/services/notification_types.go → NotificationRoute (should be in dto/)
-internal/app/services/user_types.go         → UserRequest (should be in dto/)
-pkg/types/request.go                        → ApiRequest (should be in dto/)
+internal/app/dto/user_dto.go     → (the internal/app tree no longer exists)
+pkg/types/request.go             → ApiRequest (pkg/types is for shared response/error types only)
 ```
 
-#### 1.5.2 Enums and Constants
+DTOs carry their own validation via gin **binding tags** (see [§9.1](#91-input-validation)):
+
+```go
+// internal/modules/auth/dto.go
+type RegisterRequest struct {
+    Name     string `json:"name" binding:"required,min=3,max=255"`
+    Email    string `json:"email" binding:"required,email"`
+    Password string `json:"password" binding:"required,min=8"`
+}
 ```
-✅ ALL CONSTANTS MUST GO TO: pkg/enums/
+
+#### 1.5.2 Constants and Enum-like Values
+```
+✅ CONSTANTS LIVE WITH THE MODULE THAT OWNS THEM
 
 Location rules:
-- String constants → pkg/enums/
-- Numeric constants → pkg/enums/
-- Array/slice constants → pkg/enums/
-- Status codes → pkg/enums/
-- Configuration values (if constant) → pkg/enums/
+- A module's status/role/type constants → declared in that module's package
+- A truly cross-cutting constant (used by pkg/ and multiple modules) → pkg/ (e.g. pkg/types)
 
-⚠️  EXCEPTION - Service-specific mappings:
-- Map[string]Struct using DTOs → stays in services/ (to avoid import cycles)
-- Example: ServiceRouteMapping → internal/app/services/
+There is NO pkg/enums package. Do not invent one. Keep a constant next to the code that
+gives it meaning, in the module package, so it stays cohesive and testable.
 
 Examples:
 ✅ CORRECT:
-pkg/enums/
-    ├── payment_constants.go → PaymentMethodCard, PaymentStatusSuccess
-    ├── status.go            → StatusActive, StatusInactive
-    ├── role.go              → RoleAdmin, RoleUser, RoleModerator
-
-internal/app/services/
-    └── notification_router.go → NotificationRouteMapping (map using dto.NotificationRoute)
+internal/modules/auth/service.go  → ErrInvalidCredentials, ErrEmailAlreadyExists (domain errors)
+pkg/types/errors.go               → APIError, ErrNotFound, ErrUnauthorized (shared HTTP mapping)
 
 ❌ WRONG:
-internal/app/services/hub_types.go         → EndpointBalance (should be in enums/)
-internal/app/controllers/constants.go      → StatusCodes (should be in enums/)
-pkg/enums/hub_constants.go                 → ServiceRouteMapping (causes import cycle)
+pkg/enums/role.go                 → (no such package)
 ```
 
-#### 1.5.3 Import Cycle Prevention
+#### 1.5.3 Import Direction (no cycles)
 
-**CRITICAL: pkg/ packages CANNOT import from internal/**
+**CRITICAL: `pkg/` MUST never import from `internal/`. Modules MUST never import another
+module's internals.**
 
 ```go
 ✅ ALLOWED:
-internal/app/dto → pkg/enums        ✓
-internal/app/services → pkg/enums   ✓
-internal/app/services → dto          ✓
+internal/modules/<name> → pkg/utils, pkg/types, pkg/logger, pkg/config   ✓
+internal/bootstrap      → internal/modules/<name>                         ✓
+one module → another module's PUBLIC interface (injected via constructor) ✓
 
-❌ FORBIDDEN (causes import cycle):
-pkg/enums → internal/app/dto         ✗
-pkg/enums → internal/app/services    ✗
-pkg/utils → internal/app/models      ✗
-
-Solution for maps using DTOs:
-// ❌ WRONG - causes import cycle
-// pkg/enums/notification_constants.go
-import "internal/app/dto"
-var NotificationRouteMapping = map[string]dto.NotificationRoute{...}
-
-// ✅ CORRECT - keep in services
-// internal/app/services/notification_router.go
-import "internal/app/dto"
-var NotificationRouteMapping = map[string]dto.NotificationRoute{...}
+❌ FORBIDDEN (cause import cycles or break the layering):
+pkg/anything → internal/...                                              ✗
+internal/modules/a → internal/modules/b's unexported types               ✗
 ```
+
+Cross-module calls go through the consumed module's exported interface (e.g.
+`auth.Module.Auth()` returns `auth.Servicer`, `example.Module.API()` returns
+`example.API`), injected in `buildModules()`. See [§3.5](#35-cross-module-communication).
 
 ---
 
@@ -317,18 +333,19 @@ var NotificationRouteMapping = map[string]dto.NotificationRoute{...}
 ✅ MUST:
 - Lowercase, single word
 - No underscores, no dashes
-- Descriptive but concise
+- The package is named after the module/sub-domain it represents
 
 ✅ CORRECT:
-package controllers
-package services
-package repositories
-package utils
+package auth        // internal/modules/auth
+package example     // internal/modules/example
+package health      // internal/modules/health
+package utils       // pkg/utils
 
 ❌ WRONG:
-package user_services    // No underscores
-package UserServices     // No capitals
-package svc             // Too cryptic
+package user_auth        // No underscores
+package Auth             // No capitals
+package svc              // Too cryptic
+package controllers      // Layer-named packages no longer exist
 ```
 
 ### 2.2 Variable Names
@@ -421,108 +438,193 @@ type TransactionDataTransferObject struct { }  // Too verbose
 
 ## 3. CODE STRUCTURE
 
-### 3.1 Layered Architecture
+Each module owns its full vertical slice. Inside a module the flow is
+`handler → service → repository → model`. The HTTP layer is the **Handler** (type
+`Handler`, constructor `NewHandler`), not a "controller".
 
-**MUST follow this flow:**
+### 3.1 The Vertical Slice (handler → service → repository → model)
+
+**MUST follow this flow inside a module:**
 
 ```
 HTTP Request
     ↓
-[Router] → routes request to controller
+[Module.RegisterRoutes] → mounts the route on the /api/v1 group
     ↓
-[Controller] → thin layer, only handles HTTP concerns
-    ↓         (parse params, call service, return response)
-[Service] → business logic layer (FAT)
-    ↓         (validation, transformation, orchestration)
-[Repository] → data access layer
-    ↓         (CRUD operations only)
-[Model] → database entity
+[Handler] → thin HTTP layer (parse/bind request, call service, write response via pkg/utils)
+    ↓
+[Service] → business logic (validation, orchestration, domain errors)
+    ↓
+[Repository] → data access (CRUD / queries on the injected *gorm.DB)
+    ↓
+[Model] → GORM entity the module owns
 ```
 
 **Rules:**
 ```go
-✅ Controller SHOULD:
-- Parse request parameters
-- Call service methods
-- Format HTTP responses
-- Handle HTTP-specific errors
+✅ Handler SHOULD:
+- Bind/parse the request (c.ShouldBindJSON)
+- Call service methods (passing the request context)
+- Write responses via pkg/utils (utils.Ok, utils.Created, utils.BadRequest, …)
+- Map domain errors to HTTP (see §5.5)
 
-❌ Controller MUST NOT:
+❌ Handler MUST NOT:
 - Contain business logic
-- Access database directly
-- Perform complex transformations
-- Have more than 50 lines per function
+- Access the database directly
+- Call c.JSON directly for success/error (use pkg/utils)
 
 ✅ Service SHOULD:
-- Contain all business logic
-- Orchestrate multiple repositories
-- Validate business rules
-- Transform data between layers
+- Contain all business logic and validation of business rules
+- Define the `repository` interface it needs (consumer-defined; see §3.3)
+- Return domain errors (e.g. auth.ErrInvalidCredentials)
+- Take context.Context as its first parameter and use logger.LogStart/LogFinish
 
 ❌ Service MUST NOT:
-- Handle HTTP concerns (gin.Context)
-- Import controller packages
-- Exceed 400 lines per file
+- Handle HTTP concerns (gin.Context) — EXCEPTION: a third-party lib that requires it,
+  e.g. DataTables binding (see §11.4)
+- Import another module's internals
 
 ✅ Repository SHOULD:
-- Perform CRUD operations
-- Build database queries
-- Handle transaction management
-- Return domain models
+- Perform CRUD / build queries on its injected *gorm.DB
+- Be constructed with NewRepository(db) — no global DB access
+- Return the module's models (or errors)
 
 ❌ Repository MUST NOT:
 - Contain business logic
-- Call other repositories directly
-- Import service packages
+- Reach into another module's tables
 ```
 
 ### 3.2 Dependency Direction
 
-**MUST follow:**
+**MUST follow (within a module):**
 ```
-Controllers → Services → Repositories → Models
-     ↓            ↓            ↓
-    DTOs       Utils        Database
+Handler → Service → Repository → Model
+   ↓         ↓          ↓
+ pkg/utils  pkg/logger  *gorm.DB
 ```
 
 **FORBIDDEN:**
 ```
-❌ Models importing Services
-❌ Repositories importing Services
-❌ Services importing Controllers
+❌ Model importing Service
+❌ Repository importing Service
+❌ Service importing Handler
+❌ A module importing another module's unexported types
+❌ pkg/ importing internal/
 ❌ Circular dependencies
 ```
 
-### 3.3 Single Responsibility Principle
+### 3.3 Interfaces are Consumer-Defined (DI + testability)
 
-**Each file should have ONE clear purpose:**
+**MANDATORY: the consumer declares the interface it depends on, and receives the
+implementation through its constructor.** This is what makes a module unit-testable with a
+fake (no DB) and keeps coupling loose.
+
+- The **service** defines the `repository` interface it needs (in `service.go`).
+- The **handler** defines the `service` interface it needs (in `handler.go`).
+- `module.go` wires the concrete types together via constructors.
+
+```go
+// internal/modules/example/service.go
+// repository is the data-access contract THIS service needs (defined here, at the consumer).
+type repository interface {
+    List() ([]*Example, error)
+    Datatables(c *gin.Context) (interface{}, error)
+}
+
+type Service struct {
+    repo repository
+}
+
+func NewService(repo repository) *Service { return &Service{repo: repo} }
+```
+
+```go
+// internal/modules/example/handler.go
+// service is the business contract THIS handler needs (consumer-defined for testability).
+type service interface {
+    List(ctx context.Context) ([]*Example, error)
+    Datatables(ctx context.Context, c *gin.Context) (interface{}, error)
+}
+
+type Handler struct {
+    svc service
+}
+
+func NewHandler(svc service) *Handler { return &Handler{svc: svc} }
+```
+
+```go
+// internal/modules/example/module.go — wires the concrete graph
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))
+    return &Module{svc: svc, handler: NewHandler(svc)}
+}
+```
+
+> **No standalone business functions.** Business logic lives on a `Service` method, behind
+> a constructor-injected dependency — never as a free function operating on globals.
+
+### 3.4 Single Responsibility Principle
+
+**Each module owns one sub-domain; each file has ONE clear purpose:**
 
 ```go
 ✅ CORRECT:
-// user_service.go - User business logic
-type UserService struct {
-    userRepo repositories.UserRepository
+// internal/modules/auth/service.go — auth business logic only
+type Service struct {
+    userRepo Repository    // interface
+    mailer   EmailSender   // optional dependency, injected
 }
 
-func (s *UserService) CreateUser(dto dto.CreateUserRequest) error
-func (s *UserService) GetUserByID(id uint) (*models.User, error)
-func (s *UserService) UpdateUser(id uint, dto dto.UpdateUserRequest) error
-func (s *UserService) DeleteUser(id uint) error
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error)
+func (s *Service) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error)
+func (s *Service) ValidateToken(token string) (uint, error)
 
 ❌ WRONG:
-// god_service.go - Too many responsibilities
+// a "god" service mixing unrelated sub-domains
 type GodService struct {
-    userRepo    repositories.UserRepository
-    clientRepo  repositories.ClientRepository
-    transRepo   repositories.TransactionRepository
+    userRepo    Repository
+    paymentRepo PaymentRepository
+    reportRepo  ReportRepository
 }
 
-func (s *GodService) CreateUser() error
-func (s *GodService) ProcessTransaction() error
-func (s *GodService) SendEmail() error
+func (s *GodService) Register() error
+func (s *GodService) ProcessPayment() error
 func (s *GodService) GenerateReport() error
-func (s *GodService) ValidatePayment() error
+// → these belong in separate modules (auth / payments / reporting)
 ```
+
+### 3.5 Cross-module Communication
+
+**Modules talk to each other only through a public interface, injected via the
+constructor — never by importing another module's guts.** This keeps modules loosely
+coupled and makes the seam easy to cut later (an in-process call becomes a REST + HMAC call
+with nothing else changing).
+
+```go
+// auth exposes its public surface:
+authMod := auth.New(db)
+authMod.Middleware()   // gin.HandlerFunc — protect routes in other modules
+authMod.Auth()         // auth.Servicer — ValidateToken, etc.
+
+// A module that needs auth receives it injected in buildModules():
+//   payments.New(db, authMod.Auth())   // payments depends on auth.Servicer, not *auth.Service
+```
+
+```go
+// example exposes a minimal public contract for other modules:
+// internal/modules/example/module.go
+type API interface {
+    List(ctx context.Context) ([]*Example, error)
+}
+func (m *Module) API() API { return m.svc }
+```
+
+**Rules:**
+- Expose the smallest interface other modules need (`auth.Servicer`, `example.API`).
+- Depend on the interface, not the concrete `*Service`.
+- Wire the dependency in `buildModules()` (`internal/bootstrap/modules.go`) — the one place
+  that knows the concrete module list.
 
 ---
 
@@ -625,29 +727,33 @@ func GetUser(id uint) (error, *models.User)
 **MUST follow this order:**
 
 ```go
-// 1. Type definitions
-type UserService struct {
-    repo repositories.UserRepository
+// internal/modules/auth/service.go (package auth)
+
+// 1. Consumer-defined interface(s) this file needs (see §3.3)
+type repository interface {
+    GetUserByEmail(email string) (*User, error)
+    CreateUser(user *User) error
 }
 
-// 2. Constructor
-func NewUserService(repo repositories.UserRepository) *UserService {
-    return &UserService{repo: repo}
+// 2. Type definition
+type Service struct {
+    userRepo Repository
+    mailer   EmailSender
 }
 
-// 3. Public methods (exported) - alphabetical order
-func (s *UserService) CreateUser(dto dto.CreateUserRequest) error { }
-func (s *UserService) DeleteUser(id uint) error { }
-func (s *UserService) GetUserByID(id uint) (*models.User, error) { }
-func (s *UserService) UpdateUser(id uint, dto dto.UpdateUserRequest) error { }
+// 3. Constructor
+func NewService(userRepo Repository, mailer EmailSender) *Service {
+    return &Service{userRepo: userRepo, mailer: mailer}
+}
 
-// 4. Private methods (unexported) - alphabetical order
-func (s *UserService) buildUser(dto dto.CreateUserRequest) *models.User { }
-func (s *UserService) validateUserData(user *models.User) error { }
+// 4. Public methods (exported) — grouped by use case
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) { }
+func (s *Service) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) { }
+func (s *Service) ValidateToken(token string) (uint, error) { }
 
-// 5. Standalone helper functions
-func generateUserID() string { }
-func hashPassword(password string) (string, error) { }
+// 5. Private methods (unexported)
+func (s *Service) hashPassword(password string) (string, error) { }
+func (s *Service) verifyPassword(hashed, plain string) error { }
 ```
 
 ---
@@ -723,78 +829,73 @@ if err != nil {
 }
 ```
 
-### 5.3 Custom Error Types
+### 5.3 Domain Errors (module-local)
 
-**Define custom errors in `/pkg/types/errors.go`:**
+**Define a module's domain errors in that module's package**, as sentinel `error` values.
+The handler maps them to HTTP (see §5.5). Shared, HTTP-shaped errors (`*types.APIError`)
+live in `pkg/types/errors.go`.
 
 ```go
 ✅ CORRECT:
-// pkg/types/errors.go
-package types
-
+// internal/modules/auth/service.go (package auth)
 import "errors"
 
 var (
-    ErrNotFound          = errors.New("resource not found")
-    ErrUnauthorized      = errors.New("unauthorized access")
-    ErrInvalidInput      = errors.New("invalid input data")
-    ErrDuplicateEntry    = errors.New("duplicate entry")
-    ErrExternalAPIFailed = errors.New("external API call failed")
+    ErrEmailAlreadyExists  = errors.New("email already exists")
+    ErrInvalidCredentials  = errors.New("invalid email or password")
+    ErrUserNotFound        = errors.New("user not found")
+    ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
-// Usage in code
-if user == nil {
-    return types.ErrNotFound
+// Return a domain error from the service
+if existingUser != nil {
+    return nil, ErrEmailAlreadyExists
 }
 
-// With context
-if user == nil {
-    return fmt.Errorf("user %d: %w", id, types.ErrNotFound)
+// Wrap with context for non-sentinel failures
+if err := s.userRepo.CreateUser(user); err != nil {
+    return nil, fmt.Errorf("failed to create user: %w", err)
 }
+```
+
+```go
+// pkg/types/errors.go — shared HTTP-shaped errors (used when mapping to a response)
+var (
+    ErrNotFound       = NewAPIError(http.StatusNotFound, "Resource not found", nil)
+    ErrUnauthorized   = NewAPIError(http.StatusUnauthorized, "Unauthorized access", nil)
+    ErrInvalidInput   = NewAPIError(http.StatusBadRequest, "Invalid input data", nil)
+    ErrConflict       = NewAPIError(http.StatusConflict, "Resource already exists", nil)
+    ErrInternalServer = NewAPIError(http.StatusInternalServerError, "Internal server error", nil)
+)
 ```
 
 ### 5.4 Panic Usage
 
 ```
-❌ FORBIDDEN in business logic (controllers, services, repositories)
+❌ FORBIDDEN in business logic (handlers, services, repositories)
 ⚠️  ACCEPTABLE only in:
-    - Application initialization (main.go)
-    - Configuration validation (startup only)
-    - Fatal unrecoverable errors (database connection failure at startup)
+    - Application startup (bootstrap.Run via logger.Fatalf)
+    - Fatal unrecoverable startup errors (config load / DB connect failure)
 
-✅ ALWAYS use defer/recover in HTTP handlers
+✅ The gin engine installs gin.Recovery() in bootstrap.buildEngine(), so panics in a
+   handler are caught and turned into 500 — but you MUST NOT rely on it: return errors.
 ```
 
 ```go
 ✅ CORRECT:
-// main.go - acceptable for fatal startup errors
-func main() {
-    db, err := database.Connect()
-    if err != nil {
-        log.Fatalf("Failed to connect to database: %v", err)  // OK at startup
-    }
-
-    logger.Init()
-    // ...
+// internal/bootstrap/bootstrap.go — Fatalf is acceptable at startup
+if err := config.SetupConfig(); err != nil {
+    logger.Fatalf("config SetupConfig() error: %s", err)
 }
-
-// controller.go - never panic, always return error
-func GetUser(c *gin.Context) {
-    defer func() {
-        if r := recover(); r != nil {
-            logger.Errorf("Panic recovered: %v", r)
-            c.JSON(500, gin.H{"error": "Internal server error"})
-        }
-    }()
-
-    // Handler code
+if err := database.DbConnection(masterDSN, replicaDSN); err != nil {
+    logger.Fatalf("database DbConnection error: %s", err)
 }
 
 ❌ FORBIDDEN:
-// service.go - NEVER panic in business logic
-func CreateUser(user *models.User) error {
-    if user.Email == "" {
-        panic("email is required")  // ❌ NEVER DO THIS!
+// service.go — NEVER panic in business logic
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+    if req.Email == "" {
+        panic("email is required")  // ❌ return an error instead
     }
     // ...
 }
@@ -802,15 +903,51 @@ func CreateUser(user *models.User) error {
 
 ### 5.5 Error Strategy (HTTP Response and Domain Errors)
 
-**HTTP responses:** All error responses to the client MUST go through `pkg/utils`: `utils.BadRequest`, `utils.Unauthorized`, `utils.RespondWithAPIError`, etc. Do not call `c.JSON(code, ...)` directly for errors.
+**HTTP responses:** All responses to the client (success and error) MUST go through
+`pkg/utils`: `utils.Ok`, `utils.Created`, `utils.BadRequest`, `utils.Unauthorized`,
+`utils.RespondWithAPIError`, etc. Do not call `c.JSON(code, ...)` directly.
 
-**Domain errors:** Services return domain-specific errors (e.g. `auth.ErrEmailAlreadyExists`, `auth.ErrInvalidCredentials`). Controllers map these to HTTP using either:
-- `utils.RespondWithAPIError(c, apiErr)` when the error is mapped to a `*types.APIError` (code, message, details), or
-- `utils.InternalServerError(c, err, "…")` (and similar) for unmapped or generic errors.
+**Domain errors:** Services return module-local domain errors (e.g.
+`auth.ErrEmailAlreadyExists`, `auth.ErrInvalidCredentials`). The **handler** maps them to
+HTTP using either:
+- `utils.RespondWithAPIError(c, apiErr)` when the error is mapped to a `*types.APIError`
+  (code, message, details), or
+- `utils.InternalServerError(c, err, "…")` (and similar) for unmapped/generic errors.
 
-**pkg/types/errors:** `types.APIError` and the predefined `Err*` values are used when mapping domain errors to HTTP. Map domain errors (e.g. with `errors.Is`) to `*types.APIError` in the controller, then call `utils.RespondWithAPIError`. Do not duplicate status-code logic in multiple places.
+The canonical pattern (from `internal/modules/auth/handler.go`) is a small mapping helper
+plus `errors.Is`:
 
-**Validation errors:** Keep using `utils.BadRequest(c, err, "Invalid request data")` for `validator.ValidationErrors`; no need to convert to `types.APIError`.
+```go
+// internal/modules/auth/handler.go
+func errToAPIError(err error) *types.APIError {
+    switch {
+    case errors.Is(err, ErrEmailAlreadyExists):
+        return &types.APIError{Code: http.StatusConflict, Message: "Email already exists"}
+    case errors.Is(err, ErrInvalidCredentials):
+        return &types.APIError{Code: http.StatusUnauthorized, Message: "Invalid email or password"}
+    default:
+        return nil
+    }
+}
+
+func (h *Handler) Login(c *gin.Context) {
+    // ... bind request ...
+    response, err := h.service.Login(ctx, &req)
+    if err != nil {
+        if apiErr := errToAPIError(err); apiErr != nil {
+            utils.RespondWithAPIError(c, apiErr)
+            return
+        }
+        utils.InternalServerError(c, err, "Failed to authenticate user")
+        return
+    }
+    utils.Ok(c, response, "Login successful")
+}
+```
+
+**Validation errors:** Pass the bind error straight to `utils.BadRequest(c, err, "Invalid
+request data")`. `utils.FormatValidationErrors` turns `validator.ValidationErrors` into a
+field→message map automatically; no need to convert to `types.APIError`.
 
 ---
 
@@ -833,21 +970,21 @@ Rationale:
 
 ```go
 ✅ CORRECT:
-// Package services implements the business logic layer of the application.
+// Package auth implements the authentication module: registration, login, JWT
+// issuance/validation, and password reset.
 //
-// This package contains all business rules, validation logic, and orchestration
-// between repositories. Each service should focus on a single domain entity.
+// It owns the users table and exposes a public surface to other modules via
+// Module.Auth() (auth.Servicer) and Module.Middleware() (the JWT guard).
 //
-// Example usage:
+// Example usage (from bootstrap):
 //
-//	userService := services.NewUserService(userRepo)
-//	user, err := userService.GetUserByID(123)
-package services
+//	authMod := auth.New(db)
+//	protected.Use(authMod.Middleware())
+package auth
 ```
 
 **File to add package comment:**
-- Choose the main file or create `doc.go`
-- Usually: `user_service.go`, `transaction_service.go`, or `doc.go`
+- Choose the module's main file (`module.go` or `service.go`) or create `doc.go`.
 
 ### 6.2 Function Documentation
 
@@ -892,36 +1029,39 @@ func CreateTransaction(tx *models.Transaction) error {  // No comment!
 
 ```go
 ✅ CORRECT:
-// UserService handles all user-related business logic.
-type UserService struct {
-    userRepo repositories.UserRepository
-    logger   *logrus.Logger
+// Service handles authentication-related business logic.
+type Service struct {
+    userRepo Repository  // injected; see §3.3
+    mailer   EmailSender // optional dependency
 }
 
-// CreateUserRequest represents the data required to create a new user.
-type CreateUserRequest struct {
-    // Name is the full name of the user (required, max 255 chars)
-    Name string `json:"name" validate:"required,max=255"`
+// RegisterRequest represents the payload for user registration.
+type RegisterRequest struct {
+    // Name is the full name of the user (required, 3-255 chars)
+    Name string `json:"name" binding:"required,min=3,max=255"`
 
     // Email must be unique across all users (required, valid email format)
-    Email string `json:"email" validate:"required,email"`
+    Email string `json:"email" binding:"required,email"`
 
-    // Phone in international format with country code (optional)
-    Phone string `json:"phone" validate:"omitempty,e164"`
+    // Password is the plaintext password to hash (required, min 8 chars)
+    Password string `json:"password" binding:"required,min=8"`
 }
 
 ❌ WRONG:
-// User service
-type UserService struct {  // Too brief
-    userRepo repositories.UserRepository
+// Auth service
+type Service struct {  // Too brief
+    userRepo Repository
 }
 
-type CreateUserRequest struct {  // No struct comment!
-    Name  string `json:"name"`
-    Email string `json:"email"`
-    Phone string `json:"phone"`
+type RegisterRequest struct {  // No struct comment!
+    Name     string `json:"name"`
+    Email    string `json:"email"`
+    Password string `json:"password"`
 }
 ```
+
+> **Validation uses gin binding tags** (`binding:"..."`), bound with `c.ShouldBindJSON`,
+> not a separate `validate:"..."` + `validator.New()` call. See [§9.1](#91-input-validation).
 
 ### 6.4 Inline Comments
 
@@ -978,67 +1118,78 @@ total += fee
 
 ## 7. TESTING REQUIREMENTS
 
-### 7.1 Test File Location
+### 7.1 Test File Location — Prefer Co-located
 
-**⚠️ CRITICAL: ALL test files MUST be in the `tests/` directory, NOT co-located with source code.**
+**⚠️ CRITICAL: Prefer co-locating unit tests with the module they test, as
+`internal/modules/<name>/*_test.go`.** Unit-test the service with a **fake repository**
+(no DB). This is the canonical pattern; see `internal/modules/example/service_test.go`.
+
+There is **no root `tests/` tree**. Prefer in-package fakes; a mock reused across packages
+lives in `internal/testsupport/` (`package testsupport`) and is imported by the tests that
+need it. Test fixtures live in a `testdata/` folder next to the test that uses them (Go
+convention). DB / external-service **integration tests belong in the cross-service harness
+`paprika-testing`**, not in this repo.
 
 ```
 ✅ CORRECT:
-tests/unit/services/auth_service_test.go
-tests/unit/controllers/auth_controller_test.go
-tests/integration/api/user_api_test.go
-tests/fixtures/users.json
+internal/modules/example/service_test.go   // co-located unit test, fake repo, no DB
+internal/modules/auth/service_test.go      // co-located unit test
+internal/testsupport/user_repo_mock.go     // shared mock, imported by co-located tests
+internal/modules/example/testdata/…        // fixtures next to the test that reads them
 
 ❌ WRONG:
-internal/app/services/auth_service_test.go     // Co-located with source
-internal/app/controllers/auth_controller_test.go
-internal/domain/repositories/user_repo_test.go
+internal/app/services/auth_service_test.go  // the internal/app tree no longer exists
+tests/integration/api/health_test.go        // no root tests/ tree; integration → paprika-testing
+tests/mocks/…  tests/fixtures/…              // retired; use internal/testsupport + testdata/
 ```
 
-**Package naming for test files:**
+**Package naming for co-located unit tests — white-box (`package <module>`):**
+
+Co-located tests live in the **same package** so they can satisfy the module's
+**unexported** consumer-defined interfaces with an in-package fake (e.g. the `repository`
+interface the service depends on). This is the key enabler of DB-free unit tests.
 
 ```go
 ✅ CORRECT:
-// tests/unit/services/auth_service_test.go
-package services_test  // External test package with _test suffix
+// internal/modules/example/service_test.go
+package example  // same package — can implement the unexported `repository` interface
 
 import (
+    "context"
     "testing"
-    "your-project/internal/app/services"  // Import the package being tested
+
+    "github.com/stretchr/testify/assert"
 )
 
 ❌ WRONG:
-// tests/unit/services/auth_service_test.go
-package services  // Missing _test suffix
+// internal/modules/example/service_test.go
+package example_test  // external package can't see the unexported repository interface
 ```
 
-**Why separate tests directory:**
-- ✅ Cleaner project structure
-- ✅ Easier to run all tests (`go test ./tests/...`)
-- ✅ Clear separation of concerns
-- ✅ Better organization for large projects
-- ✅ Explicit external testing (tests public API only)
+> For a public-API test that only needs the module's exported surface, the external
+> `package <module>_test` (importing the real module path) is fine and is the default when
+> white-box access to unexported interfaces is not required.
 
 ### 7.2 Test Coverage Requirements
 
 ```
-✅ MINIMUM: 70% code coverage for services layer
-✅ MINIMUM: 50% code coverage for repositories layer
-✅ MINIMUM: 60% code coverage for utilities
-⚠️  OPTIONAL: Controllers (covered by integration tests)
+✅ MINIMUM: 70% code coverage for the service (business logic) of each module
+✅ MINIMUM: 50% code coverage for repositories
+✅ MINIMUM: 60% code coverage for pkg/utils and other shared utilities
+⚠️  Handlers: covered by handler tests (httptest + mocked service) and/or integration tests
 ```
 
 ### 7.3 Test File Naming
 
 ```go
 ✅ CORRECT:
-user_service.go       → user_service_test.go
-transaction_repo.go   → transaction_repo_test.go
-helper.go             → helper_test.go
+service.go        → service_test.go
+repository.go     → repository_test.go
+service_tokens.go → service_tokens_test.go
 
 ❌ WRONG:
-user_service.go → user_test.go
-user_service.go → test_user_service.go
+service.go → auth_test.go
+service.go → test_service.go
 ```
 
 ### 7.4 Test Function Naming
@@ -1058,95 +1209,106 @@ func Test_Create_User(t *testing.T) { }  // Wrong format
 func createUserTest(t *testing.T) { }  // Must start with Test
 ```
 
-### 7.5 Test Structure (Table-Driven Tests)
+### 7.5 Canonical Pattern — Co-located Service Test with a Fake Repo
 
-**MUST use table-driven tests for multiple scenarios:**
+**This is the pattern to copy** (from `internal/modules/example/service_test.go`). The fake
+implements the module's **unexported `repository` interface**, so the service is tested with
+no DB. Because the test is white-box (`package example`), it can see that interface.
 
 ```go
-✅ CORRECT:
-func TestCreateUser(t *testing.T) {
+// internal/modules/example/service_test.go
+package example
+
+import (
+    "context"
+    "testing"
+
+    "github.com/gin-gonic/gin"
+    "github.com/stretchr/testify/assert"
+)
+
+// fakeRepo satisfies the unexported repository interface — no DB needed.
+type fakeRepo struct {
+    items []*Example
+    err   error
+}
+
+func (f *fakeRepo) List() ([]*Example, error)                      { return f.items, f.err }
+func (f *fakeRepo) Datatables(c *gin.Context) (interface{}, error) { return nil, f.err }
+
+func TestService_List(t *testing.T) {
+    svc := NewService(&fakeRepo{items: []*Example{{ID: 1, Data: "x"}}})
+
+    got, err := svc.List(context.Background())
+
+    assert.NoError(t, err)
+    assert.Len(t, got, 1)
+    assert.Equal(t, "x", got[0].Data)
+}
+
+func TestModule_Meta(t *testing.T) {
+    m := New(nil)
+    assert.Equal(t, "example", m.Name())
+    assert.Len(t, m.Models(), 1)
+}
+```
+
+**MUST use table-driven tests** when a method has multiple scenarios (success +
+error cases), driving the fake's return values per case:
+
+```go
+func TestService_List_Cases(t *testing.T) {
     tests := []struct {
         name    string
-        input   dto.CreateUserRequest
-        want    *models.User
+        repo    *fakeRepo
+        wantLen int
         wantErr bool
     }{
-        {
-            name: "valid user",
-            input: dto.CreateUserRequest{
-                Name:  "John Doe",
-                Email: "john@example.com",
-            },
-            want: &models.User{
-                Name:  "John Doe",
-                Email: "john@example.com",
-            },
-            wantErr: false,
-        },
-        {
-            name: "duplicate email",
-            input: dto.CreateUserRequest{
-                Name:  "Jane Doe",
-                Email: "existing@example.com",
-            },
-            want:    nil,
-            wantErr: true,
-        },
-        {
-            name: "invalid email",
-            input: dto.CreateUserRequest{
-                Name:  "Invalid User",
-                Email: "not-an-email",
-            },
-            want:    nil,
-            wantErr: true,
-        },
+        {name: "returns items", repo: &fakeRepo{items: []*Example{{ID: 1, Data: "x"}}}, wantLen: 1},
+        {name: "empty", repo: &fakeRepo{}, wantLen: 0},
+        {name: "repo error", repo: &fakeRepo{err: assert.AnError}, wantErr: true},
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            got, err := service.CreateUser(tt.input)
-
+            got, err := NewService(tt.repo).List(context.Background())
             if (err != nil) != tt.wantErr {
-                t.Errorf("CreateUser() error = %v, wantErr %v", err, tt.wantErr)
-                return
+                t.Fatalf("List() error = %v, wantErr %v", err, tt.wantErr)
             }
-
-            if !reflect.DeepEqual(got, tt.want) {
-                t.Errorf("CreateUser() = %v, want %v", got, tt.want)
-            }
+            assert.Len(t, got, tt.wantLen)
         })
     }
 }
 ```
 
+**Handler tests** use `httptest` + a mocked `service` interface (defined in `handler.go`).
+
 ### 7.6 Test Organization
 
-**MUST follow this structure in `tests/` directory:**
+- **Co-located unit tests** live next to the code: `internal/modules/<name>/*_test.go`.
+- **`tests/`** holds integration tests, shared mocks, fixtures, and the testing README:
 
 ```
 tests/
-├── unit/                  # Unit tests (isolated, mocked dependencies)
-│   ├── controllers/       # Controller tests
-│   │   └── auth_controller_test.go
-│   ├── services/          # Service layer tests
-│   │   ├── user_service_test.go
-│   │   └── auth_service_test.go
-│   ├── repositories/      # Repository tests
-│   │   └── user_repo_test.go
-│   └── utils/             # Utility tests
-│       └── helper_test.go
-├── integration/           # Integration tests (real DB, external services)
-│   ├── api/              # End-to-end API tests
-│   │   ├── user_api_test.go
-│   │   └── auth_api_test.go
-│   └── database/         # Database integration tests
-│       └── migration_test.go
-├── fixtures/             # Test data
-│   ├── users.json        # Sample user data
-│   └── transactions.json # Sample transaction data
+├── unit/                 # Legacy unit tests (being migrated to co-located *_test.go)
+│   ├── services/        #   e.g. auth_service_test.go, health_service_test.go
+│   ├── controllers/     #   e.g. auth_controller_test.go, health_controller_test.go
+│   └── middlewares/     #   e.g. rate_limit_test.go, request_id_test.go
+├── integration/          # Integration tests (real server / DB)
+│   ├── api/             #   end-to-end API tests (e.g. health_test.go)
+│   └── database/        #   database integration tests (e.g. connection_test.go)
+├── mocks/                # Shared mocks for legacy tests (prefer in-package fakes for new code)
+│   ├── user_repo_mock.go
+│   └── auth_servicer_mock.go
+├── fixtures/             # Test data (e.g. users.json)
 └── README.md            # Testing documentation
 ```
+
+> New code should be tested with co-located `internal/modules/<name>/*_test.go`. The
+> `tests/unit/` tree holds older tests from the layered layout and is being migrated.
+
+`make test` runs `./tests/unit/... ./internal/... ./pkg/...`, so co-located tests under
+`internal/...` and `pkg/...` are included.
 
 ---
 
@@ -1160,7 +1322,7 @@ tests/
 
 ```go
 ✅ CORRECT:
-import "your-project/pkg/logger"
+import "github.com/0xdiaz/gin-boilerplate/pkg/logger"
 
 // Info level - normal operations
 logger.Infof("User created successfully: ID=%d, Email=%s", user.ID, user.Email)
@@ -1184,7 +1346,15 @@ fmt.Println("Error:", err)  // Don't use fmt for logging
 panic("Something went wrong")  // Don't panic for errors
 ```
 
-**Request-scoped tracing (handlers and services):** At the start of each handler call `ctx, start := logger.LogStart(c.Request.Context(), "ControllerName.Method")` and pass `ctx` to services. In each service method call `ctx, start := logger.LogStart(ctx, "ServiceName.Method")`. Before **every** return (success or error), call `logger.LogFinish(ctx, "ControllerName.Method", err, start)` or `logger.LogFinish(ctx, "ServiceName.Method", err, start)`. This produces START/FINISH lines with request_id and duration. For details and examples see **OBSERVABILITY.md**.
+**Request-scoped tracing (handlers and services):** At the start of each handler call
+`ctx, start := logger.LogStart(c.Request.Context(), "<module>.Handler.Method")` and pass
+`ctx` to the service. In each service method call
+`ctx, start := logger.LogStart(ctx, "<module>.Service.Method")`. Before **every** return
+(success or error), call `logger.LogFinish(ctx, "<module>.Handler.Method", err, start)` (or
+the `Service` equivalent). The label convention is `<module>.<Type>.<Method>`, e.g.
+`auth.Handler.Login`, `auth.Service.Login`, `example.Service.List`. `request_id` is injected
+into the context by `RequestIDMiddleware`, so the START/FINISH lines carry it automatically.
+For details and examples see **OBSERVABILITY.md**.
 
 ### 8.2 Log Levels
 
@@ -1193,7 +1363,7 @@ panic("Something went wrong")  // Don't panic for errors
 ✅ INFO:  Normal operations, state changes, successful operations
 ✅ WARN:  Unexpected situations that don't prevent operation
 ✅ ERROR: Operation failed, error occurred but system continues
-❌ FATAL: ONLY in main.go for unrecoverable startup errors
+❌ FATAL: ONLY at startup (bootstrap.Run) via logger.Fatalf, for unrecoverable errors
 ❌ PANIC: FORBIDDEN in application code
 ```
 
@@ -1226,7 +1396,7 @@ logger.Info("User:", user)          // Use structured fields instead
 
 ```go
 ✅ CORRECT:
-import "your-project/pkg/utils"
+import "github.com/0xdiaz/gin-boilerplate/pkg/utils"
 
 // Sanitize sensitive data
 sanitizedBody := utils.SanitizeLogData(requestBody)
@@ -1247,34 +1417,37 @@ logger.Infof("API Key: %s", apiKey)       // NEVER log credentials
 
 ### 9.1 Input Validation
 
-**MUST validate ALL external input:**
+**MUST validate ALL external input.** Declare validation rules as gin **binding tags** on
+the DTO, and bind at the HTTP boundary with `c.ShouldBindJSON`. Gin uses
+`go-playground/validator` under the hood; `utils.BadRequest`/`utils.FormatValidationErrors`
+turn the resulting `validator.ValidationErrors` into a field→message map automatically.
 
 ```go
 ✅ CORRECT:
-import "github.com/go-playground/validator/v10"
-
-type CreateUserRequest struct {
-    Name  string `json:"name" validate:"required,min=3,max=255"`
-    Email string `json:"email" validate:"required,email"`
-    Age   int    `json:"age" validate:"gte=0,lte=150"`
+// internal/modules/<name>/dto.go
+type RegisterRequest struct {
+    Name     string `json:"name" binding:"required,min=3,max=255"`
+    Email    string `json:"email" binding:"required,email"`
+    Password string `json:"password" binding:"required,min=8"`
 }
 
-func CreateUser(dto CreateUserRequest) error {
-    validate := validator.New()
-    if err := validate.Struct(dto); err != nil {
-        return fmt.Errorf("validation failed: %w", err)
+// internal/modules/<name>/handler.go
+func (h *Handler) Register(c *gin.Context) {
+    var req RegisterRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequest(c, err, "Invalid request data") // auto-formats validation errors
+        return
     }
-    // Process...
+    // req is validated; pass to the service
+    resp, err := h.service.Register(c.Request.Context(), &req)
+    // ...
 }
 
 ❌ WRONG:
-func CreateUser(dto CreateUserRequest) error {
-    // No validation - directly using input!
-    user := &models.User{
-        Name:  dto.Name,
-        Email: dto.Email,
-    }
-    return repo.Create(user)
+func (h *Handler) Register(c *gin.Context) {
+    var req RegisterRequest
+    _ = c.ShouldBindJSON(&req)           // bind error ignored — no validation enforced
+    _, _ = h.service.Register(c.Request.Context(), &req)
 }
 ```
 
@@ -1326,93 +1499,111 @@ hash := md5.Sum([]byte(password))  // MD5 is NOT secure!
 
 ### 9.4 Authentication & Authorization
 
-**MUST check permissions:**
+**Protect routes with the auth module's middleware**, which validates the Bearer JWT and
+sets `user_id` (a `uint`) in the gin context. Other modules obtain this guard via
+`auth.Module.Middleware()` (injected through `buildModules()`); the auth module uses
+`m.Middleware()` for its own protected routes.
 
 ```go
 ✅ CORRECT:
-func DeleteUser(c *gin.Context) {
-    // Get authenticated user
-    currentUser := c.MustGet("user").(*models.User)
+// module.go — mount a protected route behind the JWT guard
+protected := api.Group("")
+protected.Use(m.Middleware())      // auth.Module.Middleware() in other modules
+protected.GET("/profile", m.handler.Profile)
 
-    // Check permission
-    targetUserID := c.Param("id")
-    if currentUser.Role != models.RoleAdmin && currentUser.ID != targetUserID {
-        utils.HandleErrors(c, http.StatusForbidden, nil, "Unauthorized")
-        return
-    }
-
-    // Proceed with deletion
+// handler.go — read the authenticated user id set by the middleware
+func (h *Handler) Profile(c *gin.Context) {
+    userID := c.GetUint("user_id")  // set by authMiddleware; 0 if absent
+    utils.Ok(c, gin.H{"user_id": userID}, "Profile retrieved successfully")
 }
 
 ❌ WRONG:
-func DeleteUser(c *gin.Context) {
-    // No authentication check!
-    // No authorization check!
-    id := c.Param("id")
-    service.DeleteUser(id)
+func (h *Handler) Profile(c *gin.Context) {
+    // No middleware on the route, and a panicking type assertion:
+    user := c.MustGet("user").(*User)  // panics if missing/wrong type
+    _ = user
 }
 ```
+
+> The middleware sets only `user_id`. There is no `"user"` context object and no built-in
+> role/permission model — do not reference `c.MustGet("user")` or a `Role` field that does
+> not exist. Add authorization checks in the service using the authenticated `user_id`.
 
 ### 9.5 Rate Limiting
 
-**MUST implement rate limiting for public endpoints (e.g. auth):**
+**Rate limiting is applied to all `/api/v1` routes** in `bootstrap.buildEngine` — you do not
+add it per route:
 
 ```go
-✅ CORRECT:
-// In index.go — applied once on the apiV1 group; all sub-groups (auth, example, ...) inherit it.
-// middleware reads RATE_LIMIT_RPS and RATE_LIMIT_BURST from config
-apiV1.Use(middlewares.RateLimitMiddleware())
+✅ CORRECT (internal/bootstrap/server.go):
+v1 := r.Group("/api/v1")
+v1.Use(middleware.RateLimitMiddleware())   // per-client-IP limiter
+for _, m := range mods {
+    m.RegisterRoutes(v1)
+}
 ```
 
-```go
-❌ WRONG:
-// Do NOT call RateLimitMiddleware() again on a sub-group (e.g. authRoutes) — it shares the
-// same singleton limiter/key as apiV1, so this silently halves the effective burst capacity
-// for that sub-group instead of adding real protection.
-authRoutes.Use(middlewares.RateLimitMiddleware())
-```
-
-Limits are read inside `RateLimitMiddleware()` from env vars `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (defaults 100 rps, 200 burst if unset). See [CONFIGURATION.md](CONFIGURATION.md) — Environment Variables (Optional) and Example 3. If a route group genuinely needs a stricter limit (e.g. brute-force protection on login), use `RateLimitMiddlewareWithConfig(rps, burst)` with its own limiter instance instead of calling `RateLimitMiddleware()` twice.
+`RateLimitMiddleware()` limits **per client IP** and reads `RATE_LIMIT_RPS` and
+`RATE_LIMIT_BURST` from config (defaults 100 rps, 200 burst). Client IP is trustworthy only
+when `TRUSTED_PROXIES` is configured correctly (empty = trust none, so `X-Forwarded-For`
+cannot be spoofed). For a custom limit on a specific group, use
+`middleware.RateLimitMiddlewareWithConfig(rps, burst)`. See
+[CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
 ## 10. DATABASE ACCESS
 
-### 10.1 Repository Pattern
+### 10.1 Repository Pattern + Constructor Injection
 
-**MUST use repository pattern:**
+**MUST use the repository pattern with an injected `*gorm.DB`.** The repository is
+**module-local** (`internal/modules/<name>/repository.go`) and is built with
+`NewRepository(db)`. It MUST NOT touch the global DB; the connection is passed in.
+
+The **service** depends on the small `repository` interface it defines (see [§3.3](#33-interfaces-are-consumer-defined-di--testability)) — that
+interface, not the concrete repository, is what gets faked in tests.
 
 ```go
 ✅ CORRECT:
-// internal/domain/repositories/user_repository.go
-type UserRepository interface {
-    FindByID(id uint) (*models.User, error)
-    FindByEmail(email string) (*models.User, error)
-    Create(user *models.User) error
-    Update(user *models.User) error
-    Delete(id uint) error
-    List(page, pageSize int) ([]*models.User, int64, error)
+// internal/modules/example/repository.go (package example)
+type Repository struct {
+    db *gorm.DB // injected, no global state
 }
 
-// internal/adapters/database/user_repo_impl.go
-type userRepositoryImpl struct {
-    db *gorm.DB
+func NewRepository(db *gorm.DB) *Repository {
+    return &Repository{db: db}
 }
 
-func NewUserRepository(db *gorm.DB) repositories.UserRepository {
-    return &userRepositoryImpl{db: db}
+func (r *Repository) List() ([]*Example, error) {
+    var list []*Example
+    if err := r.db.Find(&list).Error; err != nil {
+        return nil, err
+    }
+    return list, nil
+}
+
+// internal/modules/example/module.go — DB injected at construction
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db))
+    return &Module{svc: svc, handler: NewHandler(svc)}
 }
 
 ❌ WRONG:
-// service.go - Direct database access!
-func (s *UserService) GetUser(id uint) (*models.User, error) {
-    var user models.User
-    if err := database.DB.First(&user, id).Error; err != nil {  // ❌ Direct DB access
+// Reaching for the global connection inside a method
+func (r *Repository) List() ([]*Example, error) {
+    var list []*Example
+    if err := database.GetDB().Find(&list).Error; err != nil {  // ❌ global DB, untestable
         return nil, err
     }
-    return &user, nil
+    return list, nil
 }
 ```
+
+> **DI rule:** repositories receive `*gorm.DB` via `NewRepository(db)`. The process-wide
+> `database.DB` / `database.GetDB()` exists only for the connection lifecycle (opened in
+> `bootstrap.Run` via `database.DbConnection(master, replica)`) and for integration tests —
+> not for use inside repositories or services. The old global-DB helpers (a shared
+> `repositories` package with `Save`/`Get`/`GetOne`) are GONE.
 
 ### 10.2 Transaction Management
 
@@ -1577,25 +1768,25 @@ PUT    /api/v1/user/update     // Use PUT /users/:id
 429 Too Many Requests   // Rate limit exceeded
 500 Internal Error      // Server error
 
-// Example usage
-func CreateUser(c *gin.Context) {
-    var dto dto.CreateUserRequest
-    if err := c.ShouldBindJSON(&dto); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// Example usage — pick the right status via pkg/utils, never raw c.JSON
+func (h *Handler) Register(c *gin.Context) {
+    var req RegisterRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequest(c, err, "Invalid request data")          // 400
         return
     }
 
-    user, err := service.CreateUser(dto)
+    resp, err := h.service.Register(c.Request.Context(), &req)
     if err != nil {
-        if errors.Is(err, types.ErrDuplicateEntry) {
-            c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
+        if apiErr := errToAPIError(err); apiErr != nil {          // e.g. 409 for ErrEmailAlreadyExists
+            utils.RespondWithAPIError(c, apiErr)
             return
         }
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error"})
+        utils.InternalServerError(c, err, "Failed to register user") // 500
         return
     }
 
-    c.JSON(http.StatusCreated, user)
+    utils.Created(c, resp, "User registered successfully")         // 201
 }
 
 ❌ WRONG:
@@ -1604,6 +1795,9 @@ c.JSON(200, gin.H{"success": false, "error": "User not found"})
 
 // Wrong status for operation
 c.JSON(404, gin.H{"message": "User created"})  // Should be 201
+
+// Raw c.JSON instead of pkg/utils (inconsistent response shape)
+c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
 ```
 
 ### 11.3 Response Format
@@ -1669,39 +1863,39 @@ c.JSON(404, gin.H{"message": "User created"})  // Should be 201
 ✅ CORRECT - Use utility functions:
 import "github.com/0xdiaz/gin-boilerplate/pkg/utils"
 
-// 200 OK
-func GetUser(c *gin.Context) {
-    user, err := service.GetUserByID(id)
+// 200 OK (from internal/modules/example/handler.go)
+func (h *Handler) List(c *gin.Context) {
+    data, err := h.svc.List(c.Request.Context())
     if err != nil {
-        utils.NotFound(c, err, "User not found")
+        utils.InternalServerError(c, err, "Failed to retrieve data")
         return
     }
-    utils.Ok(c, user, "User retrieved successfully")
+    utils.Ok(c, data, "Data retrieved successfully")
 }
 
 // 201 Created
-func CreateUser(c *gin.Context) {
-    user, err := service.CreateUser(dto)
+func (h *Handler) Create(c *gin.Context) {
+    item, err := h.svc.Create(c.Request.Context(), &req)
     if err != nil {
-        utils.BadRequest(c, err, "Failed to create user")
+        utils.BadRequest(c, err, "Failed to create item")
         return
     }
-    utils.Created(c, user, "User created successfully")
+    utils.Created(c, item, "Item created successfully")
 }
 
 // 204 No Content
-func DeleteUser(c *gin.Context) {
-    if err := service.DeleteUser(id); err != nil {
-        utils.InternalServerError(c, err, "Failed to delete user")
+func (h *Handler) Delete(c *gin.Context) {
+    if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+        utils.InternalServerError(c, err, "Failed to delete item")
         return
     }
     utils.NoContent(c)
 }
 
 ❌ WRONG - Direct c.JSON():
-func GetUser(c *gin.Context) {
-    user, _ := service.GetUserByID(id)
-    c.JSON(200, gin.H{"data": user})  // Inconsistent format!
+func (h *Handler) List(c *gin.Context) {
+    data, _ := h.svc.List(c.Request.Context())
+    c.JSON(200, gin.H{"data": data})  // Inconsistent format!
 }
 ```
 
@@ -1768,11 +1962,11 @@ c.JSON(500, map[string]string{"message": "error"})
 
 #### Third-party response format exception
 
-When an endpoint **must** follow an external format (e.g. DataTables server-side, third-party protocol), the response may be sent using that library’s helper as long as it is consistent and documented. Example: `ExampleController.GetDataDatatables` uses `datatables.JSON(c, data)` for DataTables format, not `utils.Ok`. Error paths must still use response utils.
+When an endpoint **must** follow an external format (e.g. DataTables server-side, third-party protocol), the response may be sent using that library’s helper as long as it is consistent and documented. Example: `example.Handler.Datatables` uses `datatables.JSON(c, dt)` for DataTables format, not `utils.Ok`. Error paths must still use response utils.
 
 #### Service accepting gin.Context exception (DataTables)
 
-General rule: services **MUST NOT** accept or use `gin.Context`. Exception: when a third-party library integration (e.g. Datatables-Gin) **requires** `*gin.Context` for binding query params (draw, start, length, search, order), the service method that calls that library may accept `(ctx context.Context, c *gin.Context)` to avoid duplicating the entire library API into DTOs. Example: `ExampleService.GetDataDatatables(ctx, c)` and `repositories.GetDataDatatables(c)` — this exception is documented in [SERVICE_COMPLIANCE_AUDIT.md](SERVICE_COMPLIANCE_AUDIT.md). Other services must not use `gin.Context`.
+General rule: services **MUST NOT** accept or use `gin.Context`. Exception: when a third-party library integration (e.g. Datatables-Gin) **requires** `*gin.Context` for binding query params (draw, start, length, search, order), the service method that calls that library may accept `(ctx context.Context, c *gin.Context)` to avoid duplicating the entire library API into DTOs. Example: `example.Service.Datatables(ctx, c)` and `example.Repository.Datatables(c)` — this exception is documented in [SERVICE_COMPLIANCE_AUDIT.md](SERVICE_COMPLIANCE_AUDIT.md). Other services must not use `gin.Context`.
 
 #### Standard Response Format
 
@@ -1813,11 +2007,11 @@ Validation errors are automatically formatted:
 
 ```go
 ✅ CORRECT:
-func CreateUser(c *gin.Context) {
-    var dto dto.CreateUserRequest
-    if err := c.ShouldBindJSON(&dto); err != nil {
+func (h *Handler) Register(c *gin.Context) {
+    var req RegisterRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
         // Automatically formats validator.ValidationErrors
-        utils.BadRequest(c, err, "Validation failed")
+        utils.BadRequest(c, err, "Invalid request data")
         return
     }
     // ...
@@ -1826,21 +2020,21 @@ func CreateUser(c *gin.Context) {
 // Response automatically formatted as:
 {
     "success": false,
-    "message": "Validation failed",
+    "message": "Invalid request data",
     "data": null,
     "errors": {
-        "email": "email must be a valid email address",
-        "name": "name is required",
-        "age": "age must be at least 18"
+        "Email": "Email must be a valid email address",
+        "Name": "Name is required",
+        "Password": "Password must be at least 8"
     }
 }
 ```
 
 #### Error strategy (layers)
 
-- **HTTP response:** All HTTP responses MUST go through `pkg/utils` (e.g. `utils.Ok`, `utils.BadRequest`, `utils.HandleErrors`). Controllers map service/domain errors to these utilities; no direct `c.JSON` for error/success.
-- **Domain/business errors:** Use typed errors in the service layer (e.g. `auth.ErrEmailAlreadyExists`, `auth.ErrInvalidCredentials`). Controllers use `errors.Is(err, auth.Err...)` to choose the right HTTP status and message. Keeps business rules in one place.
-- **`pkg/types/errors`:** `APIError`, `ErrNotFound`, etc. are for specific use cases (e.g. client SDK, internal mapping). Do not duplicate with domain errors; prefer domain errors in services and map to utils in controllers. Document in code when using `types.APIError` for a given flow.
+- **HTTP response:** All HTTP responses MUST go through `pkg/utils` (e.g. `utils.Ok`, `utils.BadRequest`, `utils.HandleErrors`). Handlers map service/domain errors to these utilities; no direct `c.JSON` for error/success.
+- **Domain/business errors:** Use module-local sentinel errors in the service layer (e.g. `auth.ErrEmailAlreadyExists`, `auth.ErrInvalidCredentials`). Handlers use `errors.Is(err, auth.Err...)` (via a small `errToAPIError` mapper) to choose the right HTTP status and message. Keeps business rules in one place.
+- **`pkg/types/errors`:** `APIError`, `ErrNotFound`, etc. are the shared, HTTP-shaped errors used when mapping domain errors to a response. Don't duplicate them with domain errors; prefer domain errors in services and map to `*types.APIError` in the handler. Document in code when using `types.APIError` for a given flow.
 
 ### 11.5 API Versioning
 
@@ -1857,231 +2051,110 @@ func CreateUser(c *gin.Context) {
 /users/v1 (version in wrong place)
 ```
 
-### 11.6 Router Organization
+### 11.6 Routing and Module Registration
 
-**⚠️ CRITICAL: Router files MUST be organized by controller/feature, NOT all in one file.**
+**⚠️ CRITICAL: There is no central `routers/` package. Each module registers its own
+routes in its `module.go` via `RegisterRoutes(api *gin.RouterGroup)`.** Bootstrap mounts
+every module under `/api/v1`; the list of modules lives in `buildModules()`.
 
-**File Structure:**
+**How routing is wired (three places):**
 
 ```
-internal/app/routers/
-├── index.go           # Main router - registers all route groups
-├── auth_routes.go     # Authentication routes
-├── user_routes.go     # User management routes
-├── product_routes.go  # Product routes
-└── order_routes.go    # Order routes
+internal/modules/<name>/module.go   →  RegisterRoutes(api)   // each module mounts its own routes
+internal/bootstrap/modules.go       →  buildModules(db)      // the single list of modules
+internal/bootstrap/server.go        →  buildEngine(db, mods) // mounts modules under /api/v1
+```
+
+**1. A module mounts its own routes:**
+
+```go
+// internal/modules/auth/module.go (package auth)
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    g := api.Group("/auth")
+    g.POST("/register", m.handler.Register)
+    g.POST("/login", m.handler.Login)
+    g.POST("/refresh", m.handler.RefreshToken)
+    g.POST("/forgot-password", m.handler.ForgotPassword)
+    g.POST("/reset-password", m.handler.ResetPassword)
+
+    // Protected routes use this module's own JWT guard
+    protected := api.Group("")
+    protected.Use(m.Middleware())
+    protected.GET("/profile", m.handler.Profile)
+}
+```
+
+```go
+// internal/modules/example/module.go (package example)
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    api.GET("/examples", m.handler.List)
+    api.GET("/datatables", m.handler.Datatables)
+}
+```
+
+**2. The module list (the ONE place that knows the concrete modules):**
+
+```go
+// internal/bootstrap/modules.go
+type Module interface {
+    Name() string
+    Models() []any
+    RegisterRoutes(api *gin.RouterGroup)
+}
+
+// Adding a module is ONE line here.
+func buildModules(db *gorm.DB) []Module {
+    return []Module{
+        auth.New(db),
+        example.New(db),
+    }
+}
+```
+
+**3. Bootstrap mounts everything:**
+
+```go
+// internal/bootstrap/server.go
+func buildEngine(db *gorm.DB, mods []Module) *gin.Engine {
+    r := gin.New()
+    r.Use(gin.Recovery())
+    r.Use(middleware.CORSMiddleware())
+    r.Use(middleware.RequestIDMiddleware())
+    r.Use(middleware.RequestLogMiddleware())
+    r.Use(middleware.MetricsMiddleware())
+
+    r.NoRoute(func(c *gin.Context) { utils.NotFound(c, nil, "Route not found") })
+
+    // System endpoints at ROOT (probes, monitoring) — NOT under /api/v1.
+    health.New(db).RegisterSystem(r) // GET /health, GET /metrics
+
+    // Business modules under /api/v1, rate-limited per IP.
+    v1 := r.Group("/api/v1")
+    v1.Use(middleware.RateLimitMiddleware())
+    for _, m := range mods {
+        m.RegisterRoutes(v1)
+    }
+
+    registerSwagger(r) // debug only
+    return r
+}
 ```
 
 **Rules:**
 
-```go
-✅ CORRECT:
-1. One route file per controller/feature
-2. File name pattern: {feature}_routes.go
-3. Each route file has a Register function
-4. Main router calls all Register functions
+1. **A module owns its routes.** Mount them in `Module.RegisterRoutes(api)`; never add a
+   module's routes from `bootstrap` or another module.
+2. **Business routes go under `/api/v1`** (the group passed to `RegisterRoutes`). Use
+   sub-groups inside the module (e.g. `api.Group("/auth")`).
+3. **System routes (`/health`, `/metrics`) mount at ROOT** via the health module's
+   `RegisterSystem(r)`, not under `/api/v1`.
+4. **Protected routes use the auth module's middleware**: `m.Middleware()` inside auth, or
+   the injected `authMod.Middleware()` in another module.
+5. **Add a module in exactly one line** in `buildModules()`. Models and routes are picked up
+   automatically (migrations from `Module.Models()`, routes from `RegisterRoutes`).
 
-// internal/app/routers/auth_routes.go
-package routers
-
-import (
-    "github.com/your-org/project/internal/app/controllers"
-    "github.com/your-org/project/internal/app/middlewares"
-    "github.com/your-org/project/internal/app/services"
-    "github.com/gin-gonic/gin"
-)
-
-// RegisterAuthRoutes registers authentication routes
-func RegisterAuthRoutes(router *gin.Engine, authService *services.AuthService) {
-    authController := controllers.NewAuthController(authService)
-
-    authRoutes := router.Group("/auth")
-    {
-        authRoutes.POST("/register", authController.Register)
-        authRoutes.POST("/login", authController.Login)
-        authRoutes.POST("/refresh", authController.RefreshToken)
-    }
-}
-
-// internal/app/routers/user_routes.go
-package routers
-
-import (
-    "github.com/your-org/project/internal/app/controllers"
-    "github.com/your-org/project/internal/app/middlewares"
-    "github.com/your-org/project/internal/app/services"
-    "github.com/gin-gonic/gin"
-)
-
-// RegisterUserRoutes registers user management routes
-func RegisterUserRoutes(router *gin.Engine, userService *services.UserService, authService *services.AuthService) {
-    userController := controllers.NewUserController(userService)
-
-    // Protected routes - require authentication
-    userRoutes := router.Group("/api/v1/users")
-    userRoutes.Use(middlewares.AuthMiddleware(authService))
-    {
-        userRoutes.GET("", userController.GetAll)
-        userRoutes.GET("/:id", userController.GetByID)
-        userRoutes.PUT("/:id", userController.Update)
-        userRoutes.DELETE("/:id", userController.Delete)
-    }
-}
-
-// internal/app/routers/index.go
-package routers
-
-import (
-    "net/http"
-
-    "github.com/your-org/project/internal/app/services"
-    "github.com/gin-gonic/gin"
-)
-
-// RegisterRoutes registers all application routes
-func RegisterRoutes(router *gin.Engine) {
-    // 404 handler
-    router.NoRoute(func(ctx *gin.Context) {
-        ctx.JSON(http.StatusNotFound, gin.H{
-            "status":  http.StatusNotFound,
-            "message": "Route Not Found",
-        })
-    })
-
-    // Health check (public)
-    router.GET("/health", func(ctx *gin.Context) {
-        ctx.JSON(http.StatusOK, gin.H{"live": "ok"})
-    })
-
-    // Initialize services
-    authService := services.NewAuthService()
-    userService := services.NewUserService()
-    productService := services.NewProductService()
-
-    // Register route groups
-    RegisterAuthRoutes(router, authService)
-    RegisterUserRoutes(router, userService, authService)
-    RegisterProductRoutes(router, productService, authService)
-    RegisterOrderRoutes(router, orderService, authService)
-}
-
-❌ WRONG:
-// All routes in index.go (BAD - file akan jadi terlalu panjang)
-package routers
-
-func RegisterRoutes(router *gin.Engine) {
-    // Auth routes
-    authRoutes := router.Group("/auth")
-    {
-        authRoutes.POST("/register", ...)
-        authRoutes.POST("/login", ...)
-    }
-
-    // User routes
-    userRoutes := router.Group("/users")
-    {
-        userRoutes.GET("", ...)
-        userRoutes.GET("/:id", ...)
-        userRoutes.PUT("/:id", ...)
-        // ... 50+ more routes ...
-    }
-
-    // Product routes
-    productRoutes := router.Group("/products")
-    {
-        // ... 30+ more routes ...
-    }
-
-    // This file will become 500+ lines! ❌
-}
-```
-
-**Route Organization Principles:**
-
-1. **Separation by Feature**
-   - One file per feature/controller
-   - Max 100 lines per route file
-   - Clear naming: `{feature}_routes.go`
-
-2. **Consistent Pattern**
-   ```go
-   // Function naming
-   RegisterAuthRoutes()      ✅
-   RegisterUserRoutes()      ✅
-   AuthRoutes()              ❌ (missing Register prefix)
-   SetupAuthRoutes()         ❌ (use Register)
-   InitAuthRoutes()          ❌ (use Register)
-   ```
-
-3. **Dependency Injection**
-   ```go
-   ✅ CORRECT:
-   func RegisterUserRoutes(router *gin.Engine, userService *services.UserService) {
-       userController := controllers.NewUserController(userService)
-       // ...
-   }
-
-   ❌ WRONG:
-   func RegisterUserRoutes(router *gin.Engine) {
-       // Creating services inside route function
-       userService := services.NewUserService()  // Should be passed as param
-   }
-   ```
-
-4. **Route Grouping**
-   ```go
-   ✅ CORRECT:
-   // Group related routes
-   authRoutes := router.Group("/auth")
-   {
-       authRoutes.POST("/register", authController.Register)
-       authRoutes.POST("/login", authController.Login)
-   }
-
-   // Protected group
-   protectedRoutes := router.Group("/api/v1")
-   protectedRoutes.Use(middlewares.AuthMiddleware(authService))
-   {
-       protectedRoutes.GET("/profile", userController.GetProfile)
-   }
-
-   ❌ WRONG:
-   // No grouping - repetitive; also prefer versioned path /api/v1/auth
-   router.POST("/auth/register", authController.Register)
-   router.POST("/auth/login", authController.Login)
-   router.POST("/auth/refresh", authController.RefreshToken)
-   ```
-
-5. **File Size Limit**
-   - Single route file MAX 100 lines
-   - If exceeding, split by sub-feature
-   - Example: `user_routes.go` → `user_admin_routes.go` + `user_public_routes.go`
-
-**Why This Matters:**
-
-- ✅ **Maintainability**: Easy to find routes for specific feature
-- ✅ **Scalability**: Add new features without modifying existing files
-- ✅ **Readability**: Each file focuses on one responsibility
-- ✅ **Team Work**: Multiple developers can work on different route files
-- ✅ **File Size**: Prevents index.go from becoming 1000+ lines
-- ❌ **Without organization**: index.go becomes unmaintainable mess
-
-**Example Project Structure:**
-
-```
-internal/app/routers/
-├── index.go              # 50 lines - main router
-├── auth_routes.go        # 40 lines - auth endpoints
-├── user_routes.go        # 60 lines - user CRUD
-├── product_routes.go     # 70 lines - product CRUD
-├── order_routes.go       # 80 lines - order management
-├── payment_routes.go     # 55 lines - payment processing
-└── admin_routes.go       # 45 lines - admin panel routes
-
-Total: ~400 lines across 7 files (average 57 lines per file)
-vs
-Single file: 400 lines (unmaintainable)
-```
+> ❌ Do NOT create a `routers/` package, `index.go`, or `Register*Routes(router)` functions —
+> that layout no longer exists. Routing is co-located with the module that owns it.
 
 ---
 
@@ -2091,36 +2164,36 @@ Single file: 400 lines (unmaintainable)
 
 **MUST use environment variables for configuration:**
 
+Configuration is loaded from `.env` by `pkg/config` (viper-backed) in `config.SetupConfig()`,
+validated, and exposed via `config.Get()`. Access it through the typed `Configuration`
+struct, not by reading env vars ad hoc.
+
 ```go
 ✅ CORRECT:
-// .env file
+// .env file — real keys (see CONFIGURATION.md for the full list)
 MASTER_DB_HOST=localhost
 MASTER_DB_PORT=5432
 MASTER_DB_USER=postgres
 MASTER_DB_PASSWORD=secret
 MASTER_DB_NAME=project_db
 
-JWT_SECRET=your-secret-key
-API_TIMEOUT=30s
-RATE_LIMIT=100
+JWT_SECRET=change-me-to-a-32+char-random-secret   # required, min 32 chars
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+TRUSTED_PROXIES=                                  # CSV of proxy CIDRs/IPs; empty = trust none
+RATE_LIMIT_RPS=100                                # per-IP requests/sec (default 100)
+RATE_LIMIT_BURST=200                              # per-IP burst (default 200)
+REQUEST_TIMEOUT_SECONDS=30
+SERVER_TIMEZONE=UTC
 
-// config.go
-type Config struct {
-    Database struct {
-        Host     string
-        Port     int
-        User     string
-        Password string
-        Name     string
-    }
-    JWT struct {
-        Secret string
-    }
-    API struct {
-        Timeout    time.Duration
-        RateLimit  int
-    }
+// pkg/config — typed configuration (read via config.Get())
+type Configuration struct {
+    Server   ServerConfiguration   // Host, Port, JWTSecret, TrustedProxies, RateLimitRPS, RateLimitBurst, …
+    Database DatabaseConfiguration // master + replica DSN parts
 }
+
+cfg := config.Get()                 // nil-safe: returns nil if not loaded
+secret := cfg.Server.JWTSecret
 
 ❌ WRONG:
 // Hardcoded in code
@@ -2129,6 +2202,11 @@ const (
     DBPassword = "secret123"      // ❌ NEVER commit passwords!
     JWTSecret  = "my-secret-key"  // ❌ Security risk
 )
+
+// Stale/removed env names — do NOT use:
+// ALLOWED_HOSTS         → replaced by TRUSTED_PROXIES
+// RATE_LIMIT            → replaced by RATE_LIMIT_RPS / RATE_LIMIT_BURST
+// RATE_LIMIT_USE_USER   → removed (rate limit is per IP on all /api/v1)
 ```
 
 ### 12.2 Configuration File Structure
@@ -2306,30 +2384,37 @@ gosec ./...
 
 ### 15.1 When Writing New Code
 
-1. **ALWAYS** check file size before adding code
-   - If file >250 lines, create new file instead
+1. **ALWAYS** start a new feature by copying the `example` module
+   - `cp -r internal/modules/example internal/modules/<name>`, rename the package
+   - Register it with one line in `buildModules()` (`internal/bootstrap/modules.go`)
+   - See `MODULE_GUIDE.md` — "How to add a new module"
 
-2. **ALWAYS** check function size
-   - If function >80 lines, split into smaller functions
+2. **ALWAYS** keep the feature in one module package (vertical slice)
+   - `model.go`, `dto.go`, `repository.go`, `service.go`, `handler.go`, `module.go`
+   - The service defines the `repository` interface it needs; the handler defines the
+     `service` interface it needs (consumer-defined; see §3.3)
 
-3. **ALWAYS** add documentation
-   - Package comment if new package
-   - Function comment for exported functions
-   - Struct comment for exported types
+3. **ALWAYS** check file size (>250 lines → split into another file in the same package)
+   and function size (>80 lines → split into smaller functions)
 
-4. **ALWAYS** add error handling
-   - Never ignore errors
-   - Always wrap errors with context
-   - Never use panic (except main.go startup)
+4. **ALWAYS** add documentation
+   - Package comment if new module/package
+   - Function comment for exported functions; struct comment for exported types
 
-5. **ALWAYS** write tests
-   - Test file for every new service/repository
+5. **ALWAYS** add error handling
+   - Never ignore errors; always wrap with `%w` for context
+   - Never use panic (except `bootstrap.Run` startup via `logger.Fatalf`)
+
+6. **ALWAYS** write a co-located test
+   - `internal/modules/<name>/service_test.go` using a fake repo (no DB), per
+     `example/service_test.go`
    - At least happy path + 2 error cases
 
 ### 15.2 When Refactoring Code
 
 1. **MUST** maintain backward compatibility
-   - Don't change public API without discussion
+   - Don't change a module's public surface (`Module.API()`, `auth.Servicer`,
+     `Module.Middleware()`) without discussion; other modules depend on it
 
 2. **MUST** add tests before refactoring
    - Ensure existing functionality preserved
@@ -2368,14 +2453,20 @@ gosec ./...
 
 ### Testing
 - Standard library: `testing`
-- Assertions: `github.com/stretchr/testify`
-- Mocking: `github.com/stretchr/testify/mock`
+- Assertions: `github.com/stretchr/testify/assert` (used in `example/service_test.go`)
+- Prefer in-package fakes over generated mocks for new modules; shared mocks live in `tests/mocks/`
 - HTTP testing: `httptest`
+
+### Project docs
+- [`MODULE_GUIDE.md`](./MODULE_GUIDE.md) — the modular layout (source of truth)
+- [`CONFIGURATION.md`](./CONFIGURATION.md) — environment variables
+- [`OBSERVABILITY.md`](./OBSERVABILITY.md) — logger API, request IDs, tracing
+- [`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md) — non-negotiable rules
 
 ---
 
 **END OF CODING STANDARDS**
 
-*Last updated: 2025-11-08*
-*Version: 1.0*
+*Last updated: 2026-06-10*
+*Version: 2.0 (modular architecture)*
 *Review: Every 3 months or after major changes*

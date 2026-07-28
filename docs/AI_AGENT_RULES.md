@@ -3,6 +3,11 @@
 > **CRITICAL**: These rules are MANDATORY for all AI agents working on this codebase.
 > Violating these rules will result in rejected code.
 
+> 🧭 **Structure:** This is a **modular service** — code lives in `internal/modules/<name>/`
+> (one vertical slice per module), cross-cutting code in `pkg/`, wiring in `internal/bootstrap/`.
+> See **[MODULE_GUIDE.md](./MODULE_GUIDE.md)** (the source of truth for the layout). The mandatory
+> rules below apply *inside* that layout.
+
 ---
 
 ## 🚨 CRITICAL RULES (Never Break These)
@@ -73,66 +78,60 @@ result, _ := someFunc()  // ❌ FORBIDDEN
 panic("error")           // ❌ FORBIDDEN in services
 ```
 
-### 6. DTO and Enum Placement - STRICT RULES
+### 6. DTO and Constant Placement - STRICT RULES
 ```
-✅ ALL STRUCTS → internal/app/dto/
-✅ ALL CONSTANTS → pkg/enums/
-❌ EXCEPTION: Maps using DTOs → services/ (avoid import cycles)
-```
-
-**When creating any struct:**
-```
-✅ CORRECT: internal/app/dto/hub_dto.go
-❌ WRONG: internal/app/services/hub_types.go
-❌ WRONG: pkg/types/hub_types.go
+✅ DTOs are MODULE-LOCAL → internal/modules/<name>/dto.go (package <module>)
+✅ CONSTANTS live with the module that owns them (package <module>)
+✅ Truly cross-cutting shared types/constants → pkg/types
+❌ There is NO shared internal/app/dto and NO pkg/enums package — do not invent them
 ```
 
-**When creating any constant:**
+**When creating any DTO (request/response struct):**
 ```
-✅ CORRECT: pkg/enums/hub_constants.go
-❌ WRONG: internal/app/services/constants.go
-❌ WRONG: internal/app/controllers/constants.go
+✅ CORRECT: internal/modules/auth/dto.go     → RegisterRequest, LoginRequest, AuthResponse
+            (dto.go is optional; tiny modules may keep the type in model.go)
+❌ WRONG:   internal/app/dto/user_dto.go      → (the internal/app tree no longer exists)
+❌ WRONG:   pkg/types/request.go              → (pkg/types is for shared response/error types only)
 ```
 
-**IMPORT CYCLE PREVENTION:**
+**When creating any constant or enum-like value:**
+```
+✅ CORRECT: internal/modules/auth/service.go  → ErrInvalidCredentials, ErrEmailAlreadyExists
+            (a module's status/role/type constants live in that module's package)
+❌ WRONG:   pkg/enums/role.go                 → (no such package)
+```
+
+**IMPORT DIRECTION (no cycles):**
 ```
 ✅ ALLOWED:
-   internal/app/dto → pkg/enums
-   internal/app/services → pkg/enums
-   internal/app/services → internal/app/dto
+   internal/modules/<name> → pkg/utils, pkg/types, pkg/logger, pkg/config
+   internal/bootstrap      → internal/modules/<name>
+   one module → another module's PUBLIC interface (injected via the constructor)
 
-❌ FORBIDDEN:
-   pkg/enums → internal/app/dto         (import cycle!)
-   pkg/enums → internal/app/services    (import cycle!)
+❌ FORBIDDEN (import cycle / breaks layering):
+   pkg/anything            → internal/...
+   internal/modules/a      → internal/modules/b's unexported types
 ```
 
-**If you need a map using DTOs:**
-```go
-// ❌ WRONG - causes import cycle
-// File: pkg/enums/notification_constants.go
-import "internal/app/dto"
-var NotificationRouteMapping = map[string]dto.NotificationRoute{...}
-
-// ✅ CORRECT - keep in services
-// File: internal/app/services/notification_router.go
-import "internal/app/dto"
-var NotificationRouteMapping = map[string]dto.NotificationRoute{...}
-```
+**Cross-module data:** never reach into another module's package for its DTOs/constants. A
+module that needs another module receives its **public interface** (e.g. `auth.Servicer` via
+`authMod.Auth()`) injected in `buildModules()`. See [DESIGN_PATTERNS.md](./DESIGN_PATTERNS.md)
+§3.6 (Dependency Injection) and §13.5 (Reaching Into Another Module).
 
 ### 7. API Responses - MANDATORY UTILS
 ```
 ✅ MUST use pkg/utils response functions
-❌ NEVER use c.JSON() directly in controllers
-✅ ALWAYS import "pkg/utils" in controllers
+❌ NEVER use c.JSON() directly in handlers (for API responses)
+✅ ALWAYS import "pkg/utils" in handlers
 ```
 
 **When sending success responses:**
 ```go
-// ✅ CORRECT
-import "github.com/.../pkg/utils"
+// ✅ CORRECT — handler methods on a struct, using pkg/utils
+import "github.com/0xdiaz/gin-boilerplate/pkg/utils"
 
-func GetUser(c *gin.Context) {
-    user, err := service.GetUserByID(id)
+func (h *Handler) GetUser(c *gin.Context) {
+    user, err := h.svc.GetUserByID(c.Request.Context(), id)
     if err != nil {
         utils.NotFound(c, err, "User not found")
         return
@@ -140,18 +139,23 @@ func GetUser(c *gin.Context) {
     utils.Ok(c, user, "User retrieved successfully")
 }
 
-func CreateUser(c *gin.Context) {
-    user, err := service.CreateUser(dto)
+func (h *Handler) CreateUser(c *gin.Context) {
+    var req CreateUserRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequest(c, err, "Invalid request data")
+        return
+    }
+    user, err := h.svc.CreateUser(c.Request.Context(), &req)
     if err != nil {
-        utils.BadRequest(c, err, "Failed to create user")
+        utils.InternalServerError(c, err, "Failed to create user")
         return
     }
     utils.Created(c, user, "User created successfully")
 }
 
 // ❌ WRONG - direct c.JSON()
-func GetUser(c *gin.Context) {
-    user, _ := service.GetUserByID(id)
+func (h *Handler) GetUser(c *gin.Context) {
+    user, _ := h.svc.GetUserByID(c.Request.Context(), id)
     c.JSON(200, gin.H{"data": user})  // Inconsistent format!
 }
 ```
@@ -195,15 +199,15 @@ Errors:
    - If >100 lines per function → plan extraction
 
 3. **Check dependencies**
-   - What layer am I in? (controller/service/repository)
+   - Which module am I in? Which file in the slice? (handler/service/repository/model)
    - Am I following dependency direction?
-   - Am I importing the right packages?
+   - Am I depending on a consumer-defined interface, not a concrete type?
 
 ### While Writing Code
 
 1. **Follow the architecture**
    ```
-   Controller (HTTP) → Service (Logic) → Repository (Data) → Model
+   Handler (HTTP) → Service (Logic) → Repository (Data) → Model
    ```
 
 2. **Keep count of lines**
@@ -246,36 +250,40 @@ Errors:
 
 ## 📐 ARCHITECTURE RULES
 
-### Controller Layer
+### Handler Layer (the HTTP layer — not a "controller")
 ```go
 ✅ DO:
-- Parse HTTP request (params, body, headers)
-- Call service method
-- Return HTTP response
-- Handle HTTP status codes
+- Bind/parse the HTTP request (params, body, headers)
+- Open/close a trace span (logger.LogStart / logger.LogFinish)
+- Call the service through the consumer-defined `service` interface
+- Respond via pkg/utils (utils.Ok, utils.Created, utils.BadRequest, …)
 
 ❌ DON'T:
 - Contain business logic
-- Access database directly
+- Access the database / call repositories directly
 - Have functions >50 lines
-- Import repository packages
+- Write c.JSON(...) by hand for API responses
+- Import another module's internals
 ```
 
 **Template:**
 ```go
-func GetUser(c *gin.Context) {
-    // 1. Parse input
+func (h *Handler) GetUser(c *gin.Context) {
+    // 1. Open a trace span + parse input
+    ctx, start := logger.LogStart(c.Request.Context(), "users.Handler.GetUser")
     id := c.Param("id")
 
-    // 2. Call service
-    user, err := service.GetUserByID(id)
+    // 2. Call the service
+    user, err := h.svc.GetUserByID(ctx, id)
     if err != nil {
-        utils.HandleErrors(c, http.StatusNotFound, nil, err.Error())
+        logger.LogFinish(ctx, "users.Handler.GetUser", err, start)
+        utils.NotFound(c, err, "User not found")
         return
     }
 
-    // 3. Return response
-    c.JSON(http.StatusOK, user)
+    // 3. Respond via pkg/utils
+    logger.LogFinish(ctx, "users.Handler.GetUser", nil, start)
+    utils.Ok(c, user, "User retrieved successfully")
 }
 // Total: ~15 lines
 ```
@@ -284,43 +292,49 @@ func GetUser(c *gin.Context) {
 ```go
 ✅ DO:
 - Implement ALL business logic
-- Validate input
-- Orchestrate multiple repositories
-- Transform data between layers
-- Handle business errors
+- Define the `repository` interface it needs (consumer-defined, in service.go)
+- Accept and propagate context.Context (LogStart / LogFinish)
+- Orchestrate multiple repositories; return module sentinel errors
+- Transform DTO ↔ model
 
 ❌ DON'T:
-- Handle HTTP concerns (gin.Context)
-- Import controller packages
-- Exceed 400 lines per file
+- Handle HTTP concerns (gin.Context) — except a lib that needs it (e.g. DataTables paging)
+- Import the handler layer or another module's internals
+- Exceed 400 lines per file (split into service_<topic>.go in the SAME package)
 - Have functions >100 lines
 ```
 
-**Template:**
+**Template** (module-local types; `req`, `User`, `ErrEmailAlreadyExists` are in this module):
 ```go
-func (s *UserService) CreateUser(dto dto.CreateUserRequest) (*models.User, error) {
-    // 1. Validate
-    if err := s.validate(dto); err != nil {
-        return nil, fmt.Errorf("validation failed: %w", err)
-    }
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+    ctx, start := logger.LogStart(ctx, "auth.Service.Register")
 
-    // 2. Check duplicates
-    existing, _ := s.userRepo.FindByEmail(dto.Email)
+    // 1. Business constraint: email must be unique
+    existing, err := s.userRepo.GetUserByEmail(req.Email)
+    if err != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to check email: %w", err)
+    }
     if existing != nil {
-        return nil, types.ErrDuplicateEntry
+        logger.LogFinish(ctx, "auth.Service.Register", ErrEmailAlreadyExists, start)
+        return nil, ErrEmailAlreadyExists // sentinel error — handler maps to 409
     }
 
-    // 3. Transform
-    user := s.buildUser(dto)
-
-    // 4. Save
-    if err := s.userRepo.Create(user); err != nil {
-        logger.Errorf("failed to create user: %v", err)
-        return nil, fmt.Errorf("create user: %w", err)
+    // 2. Apply business logic + persist
+    hashed, err := s.hashPassword(req.Password)
+    if err != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to process password: %w", err)
+    }
+    user := &User{Name: req.Name, Email: req.Email, Password: hashed}
+    if err = s.userRepo.CreateUser(user); err != nil {
+        logger.LogFinish(ctx, "auth.Service.Register", err, start)
+        return nil, fmt.Errorf("failed to create user: %w", err)
     }
 
-    logger.Infof("User created: ID=%d, Email=%s", user.ID, user.Email)
-    return user, nil
+    logger.Infof("user registered successfully: %s", user.Email)
+    logger.LogFinish(ctx, "auth.Service.Register", nil, start)
+    return &AuthResponse{ /* ... */ }, nil
 }
 // Total: ~30 lines
 ```
@@ -328,26 +342,26 @@ func (s *UserService) CreateUser(dto dto.CreateUserRequest) (*models.User, error
 ### Repository Layer
 ```go
 ✅ DO:
-- CRUD operations only
-- Database queries
-- Transaction management
-- Return domain models
+- CRUD operations only, on the INJECTED *gorm.DB (NewRepository(db); no globals)
+- Database queries / transaction management
+- Translate DB-specific errors (gorm.ErrRecordNotFound → nil, nil)
+- Return the module's own models
 
 ❌ DON'T:
-- Contain business logic
-- Validate business rules
-- Call other repositories
-- Import service packages
+- Contain business logic / validate business rules
+- Use the database.GetDB() global
+- Call another module's repository
+- Import the service or handler layer
 ```
 
-**Template:**
+**Template** (`User` is this module's model; `r.db` is the injected connection):
 ```go
-func (r *userRepository) FindByID(id uint) (*models.User, error) {
-    var user models.User
+func (r *Repository) FindByID(id uint) (*User, error) {
+    var user User
 
     if err := r.db.First(&user, id).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
-            return nil, types.ErrNotFound
+            return nil, nil // not found is not an error here; the service decides
         }
         return nil, fmt.Errorf("query failed: %w", err)
     }
@@ -361,9 +375,12 @@ func (r *userRepository) FindByID(id uint) (*models.User, error) {
 
 ## 🔍 COMMON PATTERNS
 
+> In the patterns below, `User`, `UpdateUserRequest`, and the `Err*` sentinels are all
+> declared in the module's own package (no `models.`/`dto.` prefix).
+
 ### 1. List with Pagination
 ```go
-func (s *UserService) ListUsers(page, pageSize int) ([]*models.User, int64, error) {
+func (s *Service) ListUsers(ctx context.Context, page, pageSize int) ([]*User, int64, error) {
     // Validate pagination
     if page < 1 {
         page = 1
@@ -373,7 +390,7 @@ func (s *UserService) ListUsers(page, pageSize int) ([]*models.User, int64, erro
     }
 
     // Get data
-    users, total, err := s.userRepo.List(page, pageSize)
+    users, total, err := s.repo.List(page, pageSize)
     if err != nil {
         return nil, 0, fmt.Errorf("list users: %w", err)
     }
@@ -384,27 +401,27 @@ func (s *UserService) ListUsers(page, pageSize int) ([]*models.User, int64, erro
 
 ### 2. Update Operations
 ```go
-func (s *UserService) UpdateUser(id uint, dto dto.UpdateUserRequest) (*models.User, error) {
+func (s *Service) UpdateUser(ctx context.Context, id uint, req *UpdateUserRequest) (*User, error) {
     // 1. Get existing
-    user, err := s.userRepo.FindByID(id)
+    user, err := s.repo.FindByID(id)
     if err != nil {
         return nil, fmt.Errorf("get user: %w", err)
     }
 
     // 2. Check business rules
-    if dto.Email != user.Email {
-        existing, _ := s.userRepo.FindByEmail(dto.Email)
+    if req.Email != user.Email {
+        existing, _ := s.repo.GetUserByEmail(req.Email)
         if existing != nil {
-            return nil, types.ErrDuplicateEntry
+            return nil, ErrEmailAlreadyExists // module sentinel error
         }
     }
 
     // 3. Update fields
-    user.Name = dto.Name
-    user.Email = dto.Email
+    user.Name = req.Name
+    user.Email = req.Email
 
     // 4. Save
-    if err := s.userRepo.Update(user); err != nil {
+    if err := s.repo.Update(user); err != nil {
         return nil, fmt.Errorf("update user: %w", err)
     }
 
@@ -414,54 +431,52 @@ func (s *UserService) UpdateUser(id uint, dto dto.UpdateUserRequest) (*models.Us
 
 ### 3. Delete Operations
 ```go
-func (s *UserService) DeleteUser(id uint) error {
+func (s *Service) DeleteUser(ctx context.Context, id uint) error {
     // 1. Check exists
-    user, err := s.userRepo.FindByID(id)
+    user, err := s.repo.FindByID(id)
     if err != nil {
         return fmt.Errorf("get user: %w", err)
     }
 
-    // 2. Check business rules (e.g., can't delete if has active transactions)
-    hasTransactions, err := s.transactionRepo.HasActiveTransactions(id)
+    // 2. Check business rules (e.g., can't delete if it still has active transactions)
+    hasTransactions, err := s.repo.HasActiveTransactions(id)
     if err != nil {
         return fmt.Errorf("check transactions: %w", err)
     }
     if hasTransactions {
-        return types.ErrCannotDelete
+        return ErrCannotDelete // module sentinel error
     }
 
     // 3. Delete
-    if err := s.userRepo.Delete(user.ID); err != nil {
+    if err := s.repo.Delete(user.ID); err != nil {
         return fmt.Errorf("delete user: %w", err)
     }
 
-    logger.Infof("User deleted: ID=%d", id)
+    logger.Infof("user deleted: ID=%d", id)
     return nil
 }
 ```
 
-### 4. Transaction Pattern
+### 4. Transaction Pattern (the tx lives in the REPOSITORY, on the injected *gorm.DB)
 ```go
-func (s *TransactionService) ProcessPayment(dto dto.PaymentRequest) error {
-    return s.db.Transaction(func(tx *gorm.DB) error {
-        // All operations in transaction
-        // If any fails, all rollback
-
-        // Step 1
-        if err := s.createTransaction(tx, dto); err != nil {
-            return err
+// internal/modules/<name>/repository.go — the service orchestrates WHEN to call this;
+// the repository owns the transaction mechanics (the service never touches *gorm.DB).
+func (r *Repository) ProcessPayment(clientID uint, amount float64) error {
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // Step 1: create the transaction record
+        txn := &Transaction{ClientID: clientID, Amount: amount, Status: "pending"}
+        if err := tx.Create(txn).Error; err != nil {
+            return fmt.Errorf("create transaction: %w", err)
         }
 
-        // Step 2
-        if err := s.updateBalance(tx, dto.UserID, dto.Amount); err != nil {
-            return err
+        // Step 2: deduct balance
+        if err := tx.Model(&Account{}).
+            Where("client_id = ?", clientID).
+            Update("balance", gorm.Expr("balance - ?", amount)).Error; err != nil {
+            return fmt.Errorf("update balance: %w", err)
         }
 
-        // Step 3
-        if err := s.createAuditLog(tx, dto); err != nil {
-            return err
-        }
-
+        // returning nil commits; any returned error rolls back automatically
         return nil
     })
 }
@@ -475,29 +490,33 @@ func (s *TransactionService) ProcessPayment(dto dto.PaymentRequest) error {
 
 - [ ] No hardcoded passwords/secrets
 - [ ] No SQL string concatenation
-- [ ] All input validated
+- [ ] All input validated (gin binding tags + c.ShouldBindJSON)
 - [ ] Passwords hashed with bcrypt
-- [ ] Authentication checked in controllers
-- [ ] Authorization checked where needed
+- [ ] Protected routes behind the auth module's Middleware() guard
+- [ ] Authorization checked where needed (using the authenticated user_id)
 - [ ] Sensitive data sanitized in logs
 - [ ] Rate limiting applied
-- [ ] CORS configured properly (never combine `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials`; use an explicit origin allowlist via `CORS_ALLOWED_ORIGINS`)
+- [ ] CORS configured properly
 
-### Validation Pattern
+### Validation Pattern (gin binding tags, bound at the HTTP boundary)
 ```go
+// internal/modules/<name>/dto.go — rules are gin binding tags (validated by ShouldBindJSON)
 type CreateUserRequest struct {
-    Name     string `json:"name" validate:"required,min=3,max=255"`
-    Email    string `json:"email" validate:"required,email"`
-    Password string `json:"password" validate:"required,min=8"`
-    Age      int    `json:"age" validate:"gte=0,lte=150"`
+    Name     string `json:"name" binding:"required,min=3,max=255"`
+    Email    string `json:"email" binding:"required,email"`
+    Password string `json:"password" binding:"required,min=8"`
+    Age      int    `json:"age" binding:"gte=0,lte=150"`
 }
 
-func (s *UserService) validateCreateUser(dto CreateUserRequest) error {
-    validate := validator.New()
-    if err := validate.Struct(dto); err != nil {
-        return fmt.Errorf("validation failed: %w", err)
+// internal/modules/<name>/handler.go — bind + validate in one step;
+// utils.BadRequest turns validator.ValidationErrors into a field→message map.
+func (h *Handler) CreateUser(c *gin.Context) {
+    var req CreateUserRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.BadRequest(c, err, "Invalid request data")
+        return
     }
-    return nil
+    // req is validated; pass to the service
 }
 ```
 
@@ -505,75 +524,60 @@ func (s *UserService) validateCreateUser(dto CreateUserRequest) error {
 
 ## 📝 TESTING PATTERNS
 
-### Test File Structure
+### Test File Structure (CO-LOCATED, white-box, in-package fake repo — no DB)
+
+⚠️ Unit tests live next to the module as `internal/modules/<name>/*_test.go`, in the **same
+package** (`package <module>`) so the fake can satisfy the module's **unexported** `repository`
+interface. This is the canonical pattern; see `internal/modules/example/service_test.go`.
+
 ```go
-package services_test
+// internal/modules/users/service_test.go
+package users
 
 import (
+    "context"
+    "errors"
     "testing"
+
     "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/mock"
 )
 
-// Mock repository
-type MockUserRepository struct {
-    mock.Mock
+// fakeRepo satisfies the unexported repository interface — no DB needed.
+type fakeRepo struct {
+    byEmail *User
+    err     error
 }
 
-func (m *MockUserRepository) FindByID(id uint) (*models.User, error) {
-    args := m.Called(id)
-    if args.Get(0) == nil {
-        return nil, args.Error(1)
-    }
-    return args.Get(0).(*models.User), args.Error(1)
-}
+func (f *fakeRepo) GetUserByEmail(email string) (*User, error) { return f.byEmail, f.err }
+func (f *fakeRepo) CreateUser(u *User) error                   { return f.err }
 
-// Tests
 func TestCreateUser_Success(t *testing.T) {
-    // Arrange
-    mockRepo := new(MockUserRepository)
-    service := NewUserService(mockRepo)
+    svc := NewService(&fakeRepo{}) // GetUserByEmail returns (nil, nil) → no duplicate
 
-    dto := dto.CreateUserRequest{
-        Name:  "John Doe",
-        Email: "john@example.com",
-    }
+    user, err := svc.CreateUser(context.Background(), &CreateUserRequest{
+        Name: "John Doe", Email: "john@example.com",
+    })
 
-    mockRepo.On("FindByEmail", dto.Email).Return(nil, types.ErrNotFound)
-    mockRepo.On("Create", mock.Anything).Return(nil)
-
-    // Act
-    user, err := service.CreateUser(dto)
-
-    // Assert
     assert.NoError(t, err)
     assert.NotNil(t, user)
-    assert.Equal(t, dto.Name, user.Name)
-    mockRepo.AssertExpectations(t)
+    assert.Equal(t, "John Doe", user.Name)
 }
 
 func TestCreateUser_DuplicateEmail(t *testing.T) {
-    // Arrange
-    mockRepo := new(MockUserRepository)
-    service := NewUserService(mockRepo)
+    existing := &User{ID: 1, Email: "existing@example.com"}
+    svc := NewService(&fakeRepo{byEmail: existing})
 
-    dto := dto.CreateUserRequest{
-        Name:  "John Doe",
-        Email: "existing@example.com",
-    }
+    user, err := svc.CreateUser(context.Background(), &CreateUserRequest{
+        Name: "John Doe", Email: "existing@example.com",
+    })
 
-    existingUser := &models.User{ID: 1, Email: dto.Email}
-    mockRepo.On("FindByEmail", dto.Email).Return(existingUser, nil)
-
-    // Act
-    user, err := service.CreateUser(dto)
-
-    // Assert
-    assert.Error(t, err)
     assert.Nil(t, user)
-    assert.Equal(t, types.ErrDuplicateEntry, err)
+    assert.True(t, errors.Is(err, ErrEmailAlreadyExists)) // module sentinel error
 }
 ```
+
+> Prefer in-package fakes over the shared `tests/mocks/` helpers for new code. Handler tests use
+> `httptest` + a fake implementing the handler's `service` interface.
 
 ### Table-Driven Tests
 ```go
@@ -604,35 +608,47 @@ func TestValidateEmail(t *testing.T) {
 
 ## 🚀 QUICK REFERENCE
 
-### When Creating New Service
+### When Creating a New Module
 
-1. Create service file: `user_service.go`
-2. Define interface (if needed)
-3. Implement struct + constructor
-4. Implement methods (keep <100 lines each)
-5. Add error handling to every function
-6. Add logging for important operations
-7. Create test file: `user_service_test.go`
-8. Write tests (minimum 3 cases)
-9. Document all exported items
-10. Run: `go test ./...`
+The fastest path: `cp -r internal/modules/example internal/modules/<name>`, rename the package,
+then adjust. See MODULE_GUIDE.md "How to add a new module".
 
-### When Creating New Repository
+1. Create `internal/modules/<name>/` (one package = one folder).
+2. `model.go` — the GORM model(s); list them in `Module.Models()`.
+3. `repository.go` — `Repository{db}` + `NewRepository(db)` (injected *gorm.DB, no globals).
+4. `service.go` — `Service` + the `repository` interface it consumes; constructor `NewService`.
+5. `handler.go` — `Handler` + the `service` interface it consumes; constructor `NewHandler`.
+6. `module.go` — `New(db)`, `Name()`, `Models()`, `RegisterRoutes(api)`, public `API()`.
+7. Co-located `service_test.go` — white-box `package <name>`, in-package fake repo (no DB).
+8. Register it: add `<name>.New(db)` to `buildModules()` in `internal/bootstrap/modules.go`.
+9. Document all exported items.
+10. Run: `make test`.
 
-1. Define interface in `/internal/domain/repositories/`
-2. Implement in `/internal/adapters/database/`
-3. Use GORM for queries (no raw SQL)
-4. Return domain models
-5. Handle GORM errors properly
-6. Use transactions for multi-step operations
+### When Creating the Service File
 
-### When Creating New Controller
+1. Define the `repository` interface this service needs (in `service.go`, consumer-defined).
+2. Implement `Service` struct + `NewService(repo)` constructor.
+3. Implement methods (keep <100 lines each); accept/propagate `context.Context`.
+4. Use `logger.LogStart`/`LogFinish` around each method; return module sentinel errors.
+5. Add error handling to every function (wrap unexpected errors with `%w`).
+6. Create co-located `service_test.go` with a fake repo; write at least 3 cases.
 
-1. Keep functions thin (<50 lines)
-2. Parse request → Call service → Return response
-3. Handle HTTP status codes properly
-4. Use middleware for auth/validation
-5. Don't put business logic here
+### When Creating the Repository File
+
+1. `Repository{db *gorm.DB}` + `NewRepository(db)` — hold the INJECTED connection, no globals.
+2. Use GORM / parameterized queries (no raw SQL string concatenation).
+3. Return the module's own models.
+4. Translate DB errors (`gorm.ErrRecordNotFound` → `nil, nil`).
+5. Use transactions for multi-step operations (the tx lives here, not in the service).
+6. The interface it satisfies is defined by the consuming service — not by the repository.
+
+### When Creating the Handler File
+
+1. Keep handler methods thin (<50 lines): bind request → call service → respond.
+2. Define the `service` interface this handler needs (in `handler.go`, consumer-defined).
+3. Respond via `pkg/utils` (`utils.Ok`, `utils.Created`, `utils.RespondWithAPIError`, …).
+4. Protect routes with `m.Middleware()` (the auth module's JWT guard).
+5. Don't put business logic here.
 
 ### When Refactoring Large Files
 
@@ -657,10 +673,12 @@ If you see ANY of these, STOP and refactor:
 4. **No tests** → Write tests
 5. **No documentation** → Add comments
 6. **panic() in service** → Return error instead
-7. **Business logic in controller** → Move to service
-8. **Database access in controller** → Use repository
+7. **Business logic in handler** → Move to service
+8. **Database access in handler** → Use the repository
 9. **Hardcoded secrets** → Move to .env
 10. **SQL string concatenation** → Use GORM/parameterized queries
+11. **Subfolder inside a module** → Split into more files in the SAME package
+12. **Importing another module's internals** → Depend on its public interface, injected
 
 ---
 
@@ -670,13 +688,13 @@ If you see ANY of these, STOP and refactor:
 
 ```
 Simple CRUD:
-- Controller: ~15 lines
+- Handler: ~15 lines
 - Service: ~30 lines
 - Repository: ~12 lines
 
 Complex operation:
-- Controller: ~30 lines
-- Service: ~80 lines (if exceeds, split!)
+- Handler: ~30 lines
+- Service: ~80 lines (if exceeds, split into service_<topic>.go in the SAME package!)
 - Repository: ~25 lines
 
 If you estimate >100 lines for one function:
@@ -712,12 +730,13 @@ This prevents writing too much code before realizing it's wrong.
 
 ## 📚 REFERENCE FILES
 
-- Full standards: `CODING_STANDARDS.md`
-- Architecture: See "Code Quality Analysis" in project docs
-- Examples: Look at existing well-written files:
-  - Small controllers: `internal/app/controllers/user_controller.go`
-  - Good services: Check files <300 lines
-  - Good repos: Most repository files
+- Layout (source of truth): [`MODULE_GUIDE.md`](./MODULE_GUIDE.md)
+- Full standards: [`CODING_STANDARDS.md`](./CODING_STANDARDS.md)
+- Design patterns: [`DESIGN_PATTERNS.md`](./DESIGN_PATTERNS.md)
+- Critical rules: [`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md), templates: [`AI_QUICK_REFERENCE.md`](./AI_QUICK_REFERENCE.md)
+- Canonical reference module — copy it to start a new one:
+  - `internal/modules/example/` (model, dto, repository, service, handler, module, service_test)
+  - `internal/modules/auth/` (real module: JWT guard, exported Servicer, split service files)
 
 ---
 
@@ -727,5 +746,5 @@ This prevents writing too much code before realizing it's wrong.
 - ✅ Good tests = Confident refactoring
 - ✅ Good docs = Future you will thank you
 
-**Last updated:** 2025-11-08
+**Last updated:** 2026-06-10
 **Enforcement:** MANDATORY for all commits

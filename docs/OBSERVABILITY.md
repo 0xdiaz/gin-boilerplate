@@ -27,17 +27,18 @@ Observability is the ability to understand the internal state of your applicatio
 ### Three Pillars Implemented
 
 ```
-✅ Logs     → Already exists (pkg/logger)
+✅ Logs     → pkg/logger + OpenTelemetry log records (trace-correlated)
 ✅ Metrics  → Basic counters and uptime
-✅ Tracing  → Request ID tracking
+✅ Tracing  → OpenTelemetry spans (cross-service) + Request ID tracking
 ```
 
 ### Features Included
 
-- **Health Check Endpoint** → `/health` for Kubernetes/load balancers
-- **Metrics Endpoint** → `/metrics` for monitoring request stats
-- **Request ID Middleware** → Track requests across logs
-- **Metrics Middleware** → Automatic request counting
+- **Health Check Endpoint** → `/health` (served at root by the health module) for Kubernetes/load balancers
+- **Metrics Endpoint** → `/metrics` (served at root by the health module) for monitoring request stats
+- **Request ID Middleware** → `pkg/middleware.RequestIDMiddleware` — track requests across logs
+- **Request Log Middleware** → `pkg/middleware.RequestLogMiddleware` — ARRIVED/RESPONSE logging with masking
+- **Metrics Middleware** → `pkg/middleware.MetricsMiddleware` — automatic request counting
 - **Global API rate limit** → Applied to all `/api/v1` routes (config: `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`); auth routes use the same limits
 - **Minimal Overhead** → ~0.36ms per request (0.72%)
 
@@ -145,24 +146,26 @@ spec:
 
 ### Implementation Details
 
-**Controller:** `internal/app/controllers/health_controller.go` — calls `ctrl.service.CheckHealth(ctx)` with request context and returns 200 or 503 based on status.
+Health and metrics live in the **health module** (`internal/modules/health/`). It is a *system* module: instead of mounting under `/api/v1`, its `RegisterSystem(r)` mounts `/health` and `/metrics` at the router root (so probes don't need the API prefix or pass through the rate limiter).
 
-**Service:** `internal/app/services/health_service.go` — health is implemented with a pluggable checker pattern:
+**Handler:** `internal/modules/health/handler.go` — calls `h.service.CheckHealth(ctx)` with the request context and returns 200, or 503 when status is `"unhealthy"`.
+
+**Service:** `internal/modules/health/service.go` — health is implemented with a pluggable checker pattern:
 
 - **`CheckHealth(ctx context.Context)`** returns overall `"healthy"` only if every registered checker returns `"ok"`.
-- **`AddChecker(name string, c HealthChecker)`** registers a dependency checker. The **HealthChecker** interface has a single method: `Check(ctx context.Context) (string, error)` returning `"ok"` or `"error"`.
-- The database is registered as a checker (e.g. `HealthService.AddChecker("database", &services.DatabaseChecker{})`) at startup. No direct `checkDatabase()` method; all checks go through the interface.
+- **`AddChecker(name string, c Checker)`** registers a dependency checker. The **Checker** interface has a single method: `Check(ctx context.Context) (string, error)` returning `"ok"` or `"error"`.
+- The database is registered as a checker in `health.New(db)`: `svc.AddChecker("database", &DatabaseChecker{DB: db})`. `DatabaseChecker` holds an injected `*gorm.DB` and pings it (a nil DB reports `"error"`). All checks go through the interface — no direct `checkDatabase()` method.
 
-See [internal/app/services/health_service.go](../internal/app/services/health_service.go) for the full implementation.
+See [internal/modules/health/service.go](../internal/modules/health/service.go) for the full implementation.
 
 ### Adding Custom Health Checks
 
 To add additional health checks (Redis, external APIs, etc.):
 
-1. Implement the **HealthChecker** interface (method `Check(ctx context.Context) (string, error)`).
-2. Register it with **`healthService.AddChecker("redis", yourRedisChecker)`** (or similar) where the health service is wired (e.g. in router setup).
+1. Implement the **Checker** interface (method `Check(ctx context.Context) (string, error)`).
+2. Register it where the module is built. The simplest path is to call `svc.AddChecker("redis", yourRedisChecker)` inside `health.New` (alongside the database checker), or expose a hook on the module.
 3. No change to `CheckHealth` logic — it already iterates over all registered checkers and marks overall status unhealthy if any return non-`"ok"`.
-4. Add unit tests in `tests/unit/services/health_service_test.go` using a mock that implements `HealthChecker`.
+4. Co-locate a unit test in `internal/modules/health/` using a fake that implements `Checker` (see `internal/modules/example/service_test.go` for the recipe).
 
 ---
 
@@ -272,10 +275,10 @@ func RecordRequest(statusCode int) {
 }
 ```
 
-**Middleware:** Automatic recording
+**Middleware:** Automatic recording, registered globally in `bootstrap.buildEngine`.
 
 ```go
-// internal/app/middlewares/metrics.go
+// pkg/middleware/metrics.go
 func MetricsMiddleware() gin.HandlerFunc {
     return func(c *gin.Context) {
         c.Next()
@@ -352,10 +355,10 @@ X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
 
 Every request produces a consistent log sequence so you can trace flow and duration:
 
-- **ARRIVED REQUEST** — Logged by middleware at request entry (IP, method, path, query, body; sensitive fields masked).
-- **START** — Logged at entry of each controller and service method (e.g. `START HealthController.Health`, `START HealthService.CheckHealth`).
-- **FINISH** — Logged at exit with success/fail and duration (e.g. `FINISH HealthService.CheckHealth (SUCCESS) duration=24ms`).
-- **RESPONSE SENT** — Logged by middleware after response (status, duration, size, body; sensitive fields masked).
+- **ARRIVED REQUEST** — Logged by `pkg/middleware.RequestLogMiddleware` at request entry (IP, method, path, query, body; sensitive fields masked).
+- **START** — Logged at entry of each handler and service method. Span names are package-qualified, e.g. `START health.Handler.Health`, `START health.Service.CheckHealth`, `START auth.Handler.Register`, `START auth.Service.Register`.
+- **FINISH** — Logged at exit with success/fail and duration (e.g. `FINISH health.Service.CheckHealth (SUCCESS) duration=24ms`).
+- **RESPONSE SENT** — Logged by `pkg/middleware.RequestLogMiddleware` after response (status, duration, size, body; sensitive fields masked).
 
 START/FINISH are always on (no DEBUG or env flag). They are produced by explicit **LogStart** and **LogFinish** calls (call LogFinish before every return), not by defer. Services receive `context.Context` so request_id flows from HTTP to service layer.
 
@@ -369,7 +372,7 @@ Use the logger from `pkg/logger` for all application logs. Request ID is injecte
 
 | API | Use case |
 |-----|----------|
-| **LogStart(ctx, spanName)** | Start a traced span. Returns `(context.Context, time.Time)`. Controllers: `logger.LogStart(c.Request.Context(), "ControllerName.Method")`. Services: `logger.LogStart(ctx, "ServiceName.Method")`. |
+| **LogStart(ctx, spanName)** | Start a traced span. Returns `(context.Context, time.Time)`. Handlers: `logger.LogStart(c.Request.Context(), "<module>.Handler.Method")`. Services: `logger.LogStart(ctx, "<module>.Service.Method")`. |
 | **LogFinish(ctx, spanName, err, start)** | End the span and log FINISH with SUCCESS/FAIL and duration (float ms). **Call before every return** in handlers and service methods. |
 | **FromContext(ctx)** | Get a log entry that includes `request_id` from context. Use for ad-hoc log lines inside a request: `logger.FromContext(ctx).Infof("message")`. |
 | **WithRequestID(requestID)** | Get a log entry with a specific request_id (e.g. when you only have the ID string). Use when outside the normal request flow. |
@@ -384,45 +387,102 @@ Use the logger from `pkg/logger` for all application logs. Request ID is injecte
 
 ### Using Request ID in Code
 
-**In Controllers:**
+**In a module Handler:**
 ```go
-func (ctrl *UserController) GetUser(c *gin.Context) {
-    ctx, start := logger.LogStart(c.Request.Context(), "UserController.GetUser")
+// internal/modules/<name>/handler.go
+func (h *Handler) GetUser(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "<name>.Handler.GetUser")
 
-    user, err := ctrl.service.GetUser(ctx, userID)
+    user, err := h.service.GetUser(ctx, userID)
     if err != nil {
-        logger.LogFinish(ctx, "UserController.GetUser", err, start)
+        logger.LogFinish(ctx, "<name>.Handler.GetUser", err, start)
         utils.InternalServerError(c, err, "Failed to get user")
         return
     }
-    logger.LogFinish(ctx, "UserController.GetUser", nil, start)
+    logger.LogFinish(ctx, "<name>.Handler.GetUser", nil, start)
     utils.Ok(c, user, "User retrieved successfully")
 }
 ```
 
-**In Services (use context.Context):**
+**In a module Service (use context.Context):**
 ```go
-func (s *UserService) GetUser(ctx context.Context, userID string) (*models.User, error) {
-    ctx, start := logger.LogStart(ctx, "UserService.GetUser")
+// internal/modules/<name>/service.go
+func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
+    ctx, start := logger.LogStart(ctx, "<name>.Service.GetUser")
 
     logger.FromContext(ctx).Infof("fetching user %s", userID)
     // Business logic...
-    logger.LogFinish(ctx, "UserService.GetUser", nil, start)
+    logger.LogFinish(ctx, "<name>.Service.GetUser", nil, start)
     return user, nil
 }
 ```
 
-Request ID is stored in `c.Request.Context()` by middleware. Controllers call `logger.LogStart(c.Request.Context(), spanName)` and pass the returned `ctx` into services; services call `logger.LogStart(ctx, spanName)` and `logger.LogFinish(ctx, spanName, err, start)` before every return. Use `logger.FromContext(ctx)` for ad-hoc log lines so every log line includes the same request_id.
+Request ID is stored in `c.Request.Context()` by middleware. Handlers call `logger.LogStart(c.Request.Context(), spanName)` and pass the returned `ctx` into services; services call `logger.LogStart(ctx, spanName)` and `logger.LogFinish(ctx, spanName, err, start)` before every return. Use the convention `<module>.Handler.<Method>` / `<module>.Service.<Method>` for span names (see `internal/modules/auth/` and `internal/modules/health/`). Use `logger.FromContext(ctx)` for ad-hoc log lines so every log line includes the same request_id.
 
-### Optional: Distributed tracing (OpenTelemetry)
+### Distributed tracing + logs (OpenTelemetry)
 
-For full distributed tracing (trace ID + span ID across services), you can integrate OpenTelemetry:
+The service emits **OpenTelemetry** traces and logs so a request can be tracked
+**across services**: an inbound `traceparent` is continued (one shared `trace_id`),
+every log line and span in that request is stamped with `trace_id`/`span_id`, and
+outbound calls re-inject `traceparent` so the trace continues downstream
+(your service and its upstreams/downstreams).
 
-- **Feature flag:** Set `ENABLE_TRACING=true` (default `false`) to initialize a tracer.
-- **Middleware:** Create a middleware that starts a span per request, injects trace_id/span_id into context and log output.
-- **Logs:** Ensure every log line in request flow includes `trace_id` (and optionally `span_id`) so log aggregators can correlate with tracing backends (e.g. Jaeger).
+It defaults to **stdout** and switches to an OTLP backend (Loki/Tempo/collector)
+**by environment alone — no code change**. Init is **non-fatal**: if telemetry
+setup fails, the service still boots (the global providers stay no-op).
 
-This boilerplate currently provides request ID only; add OpenTelemetry when you need cross-service trace correlation.
+**How it works**
+
+- `pkg/observability.Setup` (called from `bootstrap.Run`) installs a Resource
+  (`service.name`, `deployment.environment`), a TracerProvider and a LoggerProvider
+  (exporters chosen by [`autoexport`] from the `OTEL_*` env, stdout fallback), and
+  the W3C composite propagator (`tracecontext,baggage`). It returns a bounded,
+  idempotent shutdown that flushes both providers on graceful shutdown.
+- `pkg/logger` keeps its existing facade (table above). An `otellogrus` bridge
+  emits every log line as an OTel log record stamped with `trace_id`/`span_id`
+  (dual output — the legacy text line is preserved). `LogStart`/`LogFinish` now
+  open and close **real spans** (native duration, OK/ERROR status).
+- `otelgin` opens a **SERVER** span per HTTP request and continues the incoming
+  `traceparent`; the `request.id` is stamped onto that span.
+- Outbound HTTP clients (`internal/clients`, Twilio Verify) are wrapped with
+  `otelhttp`, opening a **CLIENT** span and injecting `traceparent` on every call.
+- **PII scrubbing**: sensitive log fields are masked using the shared `pkg/pii`
+  policy — the same key-list the request-log body masker uses (single source of
+  truth, so the lists never drift).
+
+**Environment variables**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | `gin-boilerplate` | overrides `service.name` |
+| `APP_ENV` | `development` | sets `deployment.environment` |
+| `OTEL_SDK_DISABLED` | unset | truthy (`true`/`1`/`yes`/`on`) disables all OTel init |
+| `OTEL_TRACES_EXPORTER` | unset → stdout | `otlp` \| `console` \| `none` |
+| `OTEL_LOGS_EXPORTER` | unset → stdout | `otlp` \| `console` \| `none` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | collector/backend URL (e.g. `http://localhost:4317`) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | unset | `http/protobuf` \| `grpc` |
+| `OTEL_RESOURCE_ATTRIBUTES` | unset | extra resource attributes (`k=v,k=v`) |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | cross-service propagation format |
+
+**Switching stdout → OTLP** (no code change):
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_LOGS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
+
+> **Note — dual stdout output:** with the stdout default the console carries both
+> the legacy text log lines and the OTel JSON log records. Set
+> `OTEL_LOGS_EXPORTER=otlp` (or `none`) to route OTel logs to a backend instead.
+
+**Deferred (follow-up):** legacy text-line removal once OTel logs are authoritative;
+deep content-level scrubbing of auto-captured URL paths / query strings / bodies in
+spans (key-based field scrubbing is in place today); trace sampling config; DB
+(gorm) instrumentation; tracing the Firebase Admin SDK (FCM) path.
+
+[`autoexport`]: https://pkg.go.dev/go.opentelemetry.io/contrib/exporters/autoexport
 
 ### Searching Logs by Request ID
 
@@ -431,11 +491,11 @@ This boilerplate currently provides request ID only; add OpenTelemetry when you 
 grep "550e8400-e29b-41d4-a716-446655440000" app.log
 
 # Example output (structured request logging):
-# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] ARRIVED REQUEST from IP=192.168.1.1 method=POST path=/auth/register query= body={}
-# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] START AuthController.Register
-# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] START AuthService.Register
-# INFO 2025-11-09T10:30:01+07:00 [550e8400-e29b-41d4-a716-446655440000] FINISH AuthService.Register (SUCCESS) duration=12ms
-# INFO 2025-11-09T10:30:01+07:00 [550e8400-e29b-41d4-a716-446655440000] FINISH AuthController.Register (SUCCESS) duration=12ms
+# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] ARRIVED REQUEST from IP=192.168.1.1 method=POST path=/api/v1/auth/register query= body={}
+# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] START auth.Handler.Register
+# INFO 2025-11-09T10:30:00+07:00 [550e8400-e29b-41d4-a716-446655440000] START auth.Service.Register
+# INFO 2025-11-09T10:30:01+07:00 [550e8400-e29b-41d4-a716-446655440000] FINISH auth.Service.Register (SUCCESS) duration=12ms
+# INFO 2025-11-09T10:30:01+07:00 [550e8400-e29b-41d4-a716-446655440000] FINISH auth.Handler.Register (SUCCESS) duration=12ms
 # INFO 2025-11-09T10:30:01+07:00 [550e8400-e29b-41d4-a716-446655440000] RESPONSE SENT status=201 duration=15ms size=512 bytes body={...}
 ```
 
@@ -595,7 +655,7 @@ func (g *Gateway) ProxyRequest(c *gin.Context) {
 
 **User Service:**
 ```go
-func (ctrl *UserController) GetUser(c *gin.Context) {
+func (h *Handler) GetUser(c *gin.Context) {
     requestID := c.GetString("request_id") // Same ID from gateway!
 
     logger.Infof("[%s] User service handling request", requestID)
@@ -778,21 +838,21 @@ docker ps | grep postgres
 
 1. **Verify metrics initialized:**
 ```go
-// Check main.go has:
+// bootstrap.Run() (internal/bootstrap/bootstrap.go) calls:
 metrics.Init()
 ```
 
 2. **Verify middleware registered:**
 ```go
-// Check router.go has:
-router.Use(middlewares.MetricsMiddleware())
+// bootstrap.buildEngine() (internal/bootstrap/server.go) calls:
+r.Use(middleware.MetricsMiddleware())
 ```
 
 3. **Test with curl:**
 ```bash
 # Make some requests
 curl http://localhost:8000/health
-curl http://localhost:8000/auth/login
+curl -X POST http://localhost:8000/api/v1/auth/login
 
 # Check metrics
 curl http://localhost:8000/metrics
@@ -819,9 +879,9 @@ logger.FromContext(ctx).Infof("User created")
 
 2. **Use LogStart/LogFinish for consistent tracing:**
 ```go
-ctx, start := logger.LogStart(c.Request.Context(), "UserController.Create")
+ctx, start := logger.LogStart(c.Request.Context(), "<module>.Handler.Create")
 // ... handler logic ...
-logger.LogFinish(ctx, "UserController.Create", err, start)
+logger.LogFinish(ctx, "<module>.Handler.Create", err, start)
 // then return
 ```
 
@@ -895,6 +955,6 @@ Add these when scaling:
 
 ---
 
-**Last Updated:** 2025-11-09
-**Implementation Phase:** Phase 1 (Basic Observability)
+**Last Updated:** 2026-06-29
+**Implementation Phase:** Phase 2 (OpenTelemetry traces + logs; stdout-default, env-switchable to OTLP)
 **Performance Overhead:** < 0.5% per request

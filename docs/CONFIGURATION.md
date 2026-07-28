@@ -114,40 +114,42 @@ if config.IsDebugEnabled() {
 
 ### Real-World Examples
 
-**Example 1: Enable SQL Logging Only in Development**
+**Example 1: Enable SQL Logging via Config**
 ```go
-// internal/adapters/database/database.go
+// pkg/database/database.go
 func DbConnection(masterDSN, replicaDSN string) error {
-    logMode := config.IsDevelopment() // true in dev, false in prod
-
-    masterDB, err := gorm.Open(postgres.Open(masterDSN), &gorm.Config{
-        Logger: logger.Default.LogMode(logger.Info),
-        // Only log SQL in development
-        DisableForeignKeyConstraintWhenMigrating: config.IsDevelopment(),
-    })
-
-    if config.IsDevelopment() {
-        masterDB = masterDB.Debug() // Enable SQL logging
+    // SQL logging is driven by MASTER_DB_LOG_MODE (config.Get().Database.LogMode),
+    // and the read replica is only registered when Debug is off.
+    logMode := config.Get().Database.LogMode
+    loglevel := gormlogger.Silent
+    if logMode {
+        loglevel = gormlogger.Info
     }
 
+    db, err := gorm.Open(postgres.Open(masterDSN), &gorm.Config{
+        Logger: gormlogger.Default.LogMode(loglevel),
+    })
+    // ...
     return nil
 }
 ```
 
 **Example 2: Seed Test Data Only in Development**
 ```go
-// migrations/migrate.go
-func Migrate() {
-    // Run migrations
-    database.MasterDB.AutoMigrate(&models.User{})
-
+// internal/migrations/migration.go owns AutoMigrate; bootstrap collects each
+// module's Models() and calls migrations.Run(db, models). Seed conditionally:
+func Run(db *gorm.DB, models []any) error {
+    if err := db.AutoMigrate(models...); err != nil {
+        return err
+    }
     // Seed test data only in development
     if config.IsDevelopment() {
-        seedTestData()
+        seedTestData(db)
     }
+    return nil
 }
 
-func seedTestData() {
+func seedTestData(db *gorm.DB) {
     logger.Infof("Seeding test data for development...")
     // Create test users, etc.
 }
@@ -155,14 +157,14 @@ func seedTestData() {
 
 **Example 3: Rate Limits From Environment**
 
-Rate limit is read inside `RateLimitMiddleware()` from `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (see `internal/app/middlewares/rate_limit.go`). If unset or ≤0, defaults (100 rps, 200 burst) are used. Set these in each environment's `.env` (e.g. lower in production, higher in development).
+Rate limit is read inside `RateLimitMiddleware()` from `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (see `pkg/middleware/rate_limit.go`). If unset or ≤0, defaults (100 rps, 200 burst) are used. Set these in each environment's `.env` (e.g. lower in production, higher in development).
 
 **Example 4: Enable Profiling in Non-Production**
 ```go
-// cmd/main.go or middleware
+// internal/bootstrap/server.go (buildEngine), on the gin engine `r`
 if !config.IsProduction() {
     // Enable pprof profiling endpoints
-    router.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
+    r.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
 }
 ```
 
@@ -222,53 +224,25 @@ The following environment variables **MUST** be set. The application will not st
 |----------|-------------|---------|-------|
 | `APP_ENV` | Application environment | `development` | Values: `development`, `staging`, `production` |
 | `DEBUG` | Debug mode | Auto (true in dev) | Set to `True` only in development |
-| `ALLOWED_HOSTS` | Reserved for future Host-header validation | `0.0.0.0` | Comma-separated list. **Not** used for CORS or reverse proxy trust — see `CORS_ALLOWED_ORIGINS` and `TRUSTED_PROXIES` below. |
-| `CORS_ALLOWED_ORIGINS` | Frontend origins allowed to make cross-origin requests | Localhost dev origins (see below) | Comma-separated, full URL with scheme (`https://app.example.com`), no wildcard. **Required in production** — startup fails if unset. |
-| `TRUSTED_PROXIES` | Reverse proxy IPs/CIDRs trusted for `X-Forwarded-For` | `127.0.0.1,::1` in development | Comma-separated. Not related to CORS. Empty (trust none) by default outside development. |
-| `SERVER_TIMEZONE` | Server timezone | `UTC` | Must be valid IANA timezone (e.g. UTC, Asia/Jakarta). Default applied in main.go when unset. |
-| `RATE_LIMIT_RPS` | Auth rate limit (requests per second per IP) | `100` | Applied to `/auth` routes only. Set to 0 or omit to use default. |
-| `RATE_LIMIT_BURST` | Auth rate limit burst size | `200` | Max tokens in bucket. Set to 0 or omit to use default. |
+| `TRUSTED_PROXIES` | Trusted reverse-proxy IPs/CIDRs | _(empty)_ | Comma-separated. Empty = trust none (use real peer IP); set to proxy CIDR in prod. |
+| `SERVER_TIMEZONE` | Server timezone | `UTC` | Must be valid IANA timezone (e.g. UTC, Asia/Jakarta). Default applied in `config.SetupConfig()` when unset; `bootstrap.Run()` sets `time.Local` from it. |
+| `RATE_LIMIT_RPS` | Rate limit (requests per second per IP) | `100` | Applied to all `/api/v1` routes. Set to 0 or omit to use default. |
+| `RATE_LIMIT_BURST` | Rate limit burst size | `200` | Max tokens in bucket. Set to 0 or omit to use default. |
 | `MASTER_DB_LOG_MODE` | Enable DB query logging | `True` | Set to `False` in production |
 | `MASTER_SSL_MODE` | Database SSL mode | `disable` | Use `require` in production |
 | `SERVER_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout (seconds) | `10` | Max time to wait for in-flight requests before exit |
-| `REFRESH_TOKEN_TTL_DAYS` | Refresh token lifetime (days) | `7` | Token is hashed at rest and rotated on every use; see [AUTHENTICATION.md](AUTHENTICATION.md) |
-
-### CORS Configuration
-
-`CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`, and `ALLOWED_HOSTS` are three separate concepts that are easy to confuse:
-
-| Variable | Purpose | Consumed by |
-|----------|---------|-------------|
-| `CORS_ALLOWED_ORIGINS` | Which frontend origins may call this API from a browser | `middlewares.CORSMiddleware()` |
-| `TRUSTED_PROXIES` | Which upstream proxy IPs are trusted to set `X-Forwarded-For` | `gin.Engine.SetTrustedProxies()` in `routers.SetupRoute()` |
-| `ALLOWED_HOSTS` | Reserved for future `Host` header validation | Not currently enforced |
-
-**Behavior:**
-
-- `CORSMiddleware` never sets `Access-Control-Allow-Origin: *`. It echoes back the exact request `Origin` only when that origin is present in `CORS_ALLOWED_ORIGINS`, and sets `Vary: Origin` accordingly.
-- `Access-Control-Allow-Credentials` is never set, since this API authenticates via a Bearer JWT in the `Authorization` header, not cookies.
-- In development (`APP_ENV=development` or unset), unset `CORS_ALLOWED_ORIGINS`/`TRUSTED_PROXIES` fall back to safe localhost defaults.
-- In staging/production, an empty `CORS_ALLOWED_ORIGINS` fails startup validation; an empty `TRUSTED_PROXIES` means no proxy is trusted (Gin uses the raw remote address).
-- Entries must start with `http://` or `https://`; a bare `*` is rejected at startup.
-
-**Verify with curl:**
-
-```bash
-# Allowed origin — should return the origin back in Access-Control-Allow-Origin
-curl -i -X OPTIONS http://localhost:8000/api/v1/auth/login \
-  -H "Origin: http://localhost:3000" \
-  -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type,Authorization"
-
-# Disallowed origin — Access-Control-Allow-Origin should be absent
-curl -i -X OPTIONS http://localhost:8000/api/v1/auth/login \
-  -H "Origin: http://evil.com" \
-  -H "Access-Control-Request-Method: POST"
-```
+| `START_COMMAND` | Container process role | `./main` | Consumed by the Docker entrypoint, **not** the Go config. See Process Roles below. |
 
 ### Graceful Shutdown
 
 The application handles `SIGTERM` and `SIGINT` (e.g. Ctrl+C) for graceful shutdown: it stops accepting new requests, waits for in-flight requests to complete (up to `SERVER_SHUTDOWN_TIMEOUT` seconds), then closes the database connection and exits. Optional env `SERVER_SHUTDOWN_TIMEOUT` (integer, seconds) defaults to 10 if unset or zero.
+
+### Process Roles (`START_COMMAND`)
+
+One Docker image can ship multiple binaries and selects the role at runtime via `START_COMMAND` (default `./main`), read by `.docker/entrypoint.sh` — not by the Go config:
+
+- **`./main`** — the HTTP/gRPC API. Stateless and request-serving; scale freely. This role owns DB migrations (the entrypoint runs schema migrations only when `START_COMMAND=./main`).
+- **`./jobs`** (`cmd/jobs`) — optional background housekeeping loops (e.g. reconcile sweeps, idempotency reapers). Each loop is single-active across replicas via a Postgres advisory-lock leader gate, so the jobs role is safe at 1+ replicas. It connects master-only and never runs migrations. Give the jobs service the same DB/Redis env as the API. The master DSN must be a **direct (non-transaction-pooler) endpoint** — a pooler multiplexes a session's statements across backends, which breaks session advisory locks.
 
 ### Replica Database (Optional)
 
@@ -325,7 +299,8 @@ func ServerConfig() string
 The application automatically validates configuration when starting:
 
 ```go
-// main.go
+// main.go is just bootstrap.Run(); SetupConfig runs first inside
+// bootstrap.Run() (internal/bootstrap/bootstrap.go):
 if err := config.SetupConfig(); err != nil {
     logger.Fatalf("config SetupConfig() error: %s", err)
 }
@@ -591,11 +566,10 @@ if config.IsProduction() {
 **1. Conditional Database Logging**
 
 ```go
-// internal/adapters/database/database.go
+// pkg/database/database.go — SQL logging is driven by MASTER_DB_LOG_MODE.
 func DbConnection(masterDSN, replicaDSN string) error {
-    if config.IsDevelopment() {
-        masterDB = masterDB.Debug() // Enable SQL logging only in dev
-    }
+    logMode := config.Get().Database.LogMode // from MASTER_DB_LOG_MODE
+    // loglevel = Info when logMode, else Silent
     return nil
 }
 ```
@@ -603,13 +577,14 @@ func DbConnection(masterDSN, replicaDSN string) error {
 **2. Environment-Specific Seeding**
 
 ```go
-// migrations/migrate.go
-func Migrate() {
-    database.MasterDB.AutoMigrate(&models.User{})
+// internal/migrations/migration.go — bootstrap passes each module's Models() here.
+func Run(db *gorm.DB, models []any) error {
+    db.AutoMigrate(models...)
 
     if config.IsDevelopment() {
-        seedTestData() // Only seed in development
+        seedTestData(db) // Only seed in development
     }
+    return nil
 }
 ```
 
@@ -617,11 +592,10 @@ func Migrate() {
 
 ```go
 // Rate limit is read from RATE_LIMIT_RPS / RATE_LIMIT_BURST in .env by RateLimitMiddleware().
+// It is applied globally to the /api/v1 group in bootstrap.buildEngine (pkg/middleware).
 // Set different values per environment (e.g. RATE_LIMIT_RPS=10 in production, 100 in development).
-// Apply once on the apiV1 group (index.go) — sub-groups like authRoutes inherit it automatically.
-// Calling RateLimitMiddleware() again on a sub-group reuses the same singleton limiter/key,
-// which halves the effective burst for that sub-group instead of adding protection.
-apiV1.Use(middlewares.RateLimitMiddleware())
+v1 := r.Group("/api/v1")
+v1.Use(middleware.RateLimitMiddleware())
 ```
 
 **4. Development-Only Debug Endpoints**
@@ -689,14 +663,14 @@ func InitLogger() {
 **8. Conditional Middleware**
 
 ```go
-// Only enable metrics in staging and production
+// In bootstrap.buildEngine, on the gin engine `r`. Middleware lives in pkg/middleware.
 if !config.IsDevelopment() {
-    router.Use(middlewares.MetricsMiddleware())
+    r.Use(middleware.MetricsMiddleware())
 }
 
-// Security headers only in production
+// Security headers only in production (add such a middleware to pkg/middleware)
 if config.IsProduction() {
-    router.Use(middlewares.SecurityHeadersMiddleware())
+    r.Use(middleware.SecurityHeadersMiddleware())
 }
 ```
 

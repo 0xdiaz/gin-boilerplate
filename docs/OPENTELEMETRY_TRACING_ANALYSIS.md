@@ -1,5 +1,12 @@
 # OpenTelemetry Tracing: Implementation Analysis
 
+> **SUPERSEDED (2026-06-29):** OpenTelemetry is now implemented (traces + logs,
+> Phase 1 + Phase 2). See `docs/OBSERVABILITY.md` § "OpenTelemetry (traces + logs)"
+> and the structure contract in `docs/meetings/optel-log.md`. The chosen approach
+> differs from this doc's `ENABLE_TRACING` proposal: exporters are env-selected via
+> autoexport (default stdout/console), with `OTEL_SDK_DISABLED`/`OTEL_*_EXPORTER=none`
+> as the off switch. Kept for historical context only.
+
 > Discussion document before implementation. Not an implementation guide.
 
 **Summary:** For a **single service (monolith)**, **request_id alone is sufficient**. Adding trace_id/OpenTelemetry is not mandatory. OTel/trace_id becomes relevant when you want to use Jaeger/Tempo or have multiple services (microservices). The implementation below is optional.
@@ -16,7 +23,7 @@
 | **Logger** | `pkg/logger`: formatter prints `[request_id]`, `LogStart`/`LogFinish`, `FromContext(ctx)` reads request_id from context. |
 | **Middleware order** | `RequestID` → `RequestLog` → `Metrics`. Request log and metrics depend on request_id. |
 | **Config** | Viper + `config.SetupConfig()`, required keys validated. No tracing-specific env yet. |
-| **Shutdown** | Graceful shutdown in `main.go` (server, DB). No tracer shutdown yet. |
+| **Shutdown** | Graceful shutdown in `internal/bootstrap/bootstrap.go` (server, DB); `main.go` is just `bootstrap.Run()`. No tracer shutdown yet. |
 
 Conclusion: the request-scoped logging and request_id foundation is solid. What can be added later: **trace_id/span_id + export to backend (OTLP/Jaeger)**, while **keeping request_id** (can be mapped to trace_id or used alongside it).
 
@@ -129,7 +136,7 @@ So: trace_id **does not replace** request_id. request_id remains for “one requ
 
 If you want **no backend initially** (only inject trace_id into context & log): SDK trace + `trace.NewNoopTracerProvider()` or a provider with `NewBatchSpanProcessor(NewNoopExporter())` so there is no network. When Jaeger/OTLP collector is available, switch to a real exporter.
 
-### 2.2 Tracer initialization (main.go)
+### 2.2 Tracer initialization (`internal/bootstrap/bootstrap.go`)
 
 - **Feature flag:** e.g. `ENABLE_TRACING` (default `false`).
 - If `true`:
@@ -139,11 +146,12 @@ If you want **no backend initially** (only inject trace_id into context & log): 
 - If `false`: use noop provider (or set nothing; SDK is usually noop by default).
 - **Shutdown:** on graceful shutdown, call `TracerProvider.Shutdown(ctx)` so pending spans are flushed (with timeout).
 
-This adds a small amount of code in `main.go` and one if/else block or `initTracing() bool` function.
+This adds a small amount of code in `internal/bootstrap/bootstrap.go` (where DB connect and graceful
+shutdown already live; `main.go` is just `bootstrap.Run()`) and one if/else block or `initTracing() bool` function.
 
 ### 2.3 Tracing middleware
 
-- **Location:** new middleware, e.g. `internal/app/middlewares/tracing.go` (or `otelgin` from contrib).
+- **Location:** new middleware, e.g. `pkg/middleware/tracing.go` (alongside `cors.go`, `request_id.go`, `metrics.go`) (or `otelgin` from contrib).
 - **Order:** tracing must have access to request_id and context. Options:
   - **Option A:** RequestID → **Tracing** → RequestLog → Metrics (trace_id/span_id available for logs).
   - **Option B:** Tracing → RequestID → RequestLog → Metrics (trace_id created first, request_id kept for backward compatibility).
@@ -209,9 +217,9 @@ Recommendation for discussion: start with **A** or **B**. If you do not have Jae
 | File / area | Change |
 |-------------|--------|
 | `go.mod` / `go.sum` | Add OTel dependency. |
-| `main.go` | Init tracer (conditional), shutdown `TracerProvider`. |
-| `internal/app/middlewares/tracing.go` | New: middleware span + inject context. |
-| `internal/app/routers/router.go` | Register tracing middleware (after RequestID). |
+| `internal/bootstrap/bootstrap.go` | Init tracer (conditional), shutdown `TracerProvider` (next to existing DB connect + graceful shutdown). |
+| `pkg/middleware/tracing.go` | New: middleware span + inject context. |
+| `internal/bootstrap/server.go` | Register tracing middleware (after `RequestIDMiddleware()` in `buildEngine`). |
 | `pkg/logger/logger.go` | Optional: read trace_id/span_id from context, add to formatter / FromContext. |
 | `docs/OBSERVABILITY.md` | Update: configuration steps, env, example log with trace_id. |
 | `.env.example` | Add ENABLE_TRACING, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, TRACE_SAMPLE_RATIO (optional). |

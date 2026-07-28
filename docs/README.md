@@ -2,13 +2,26 @@
 
 Welcome to the project documentation. This guide helps you navigate all documentation files.
 
+> 🧭 **Architecture: modular service.** Code is organized **by business module** under
+> `internal/modules/<name>/` (each owning `model.go`, `dto.go`, `repository.go`, `service.go`,
+> `handler.go`, `module.go`). Cross-cutting code lives in `pkg/`; per-service wiring in
+> `internal/bootstrap/`. **[`MODULE_GUIDE.md`](./MODULE_GUIDE.md) is the source of truth** and
+> overrides any older doc (DESIGN_PATTERNS, CODING_STANDARDS, AI_AGENT_RULES) that still describes
+> the previous `internal/app` / `internal/domain` layered layout.
+
 ---
 
 ## 🚨 FOR AI AGENTS - START HERE
 
 ### Reading Order (MANDATORY)
 
-1. **[`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md)** ⚠️ **START HERE** (100 lines, 2 min)
+0. **[`MODULE_GUIDE.md`](./MODULE_GUIDE.md)** 🧭 **SOURCE OF TRUTH** (read first for structure)
+   - How code is organized: one folder per business module under `internal/modules/`
+   - The vertical slice: `handler → service → repository → model`
+   - How to add a module (copy the `example` reference module)
+   - Overrides the layered-layout descriptions in the deeper reference docs
+
+1. **[`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md)** ⚠️ **START HERE for rules** (100 lines, 2 min)
    - Absolute non-negotiable rules
    - Struct-based patterns (MANDATORY)
    - Response utilities (MANDATORY)
@@ -41,7 +54,8 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 | File | Size | Purpose | When to Read |
 |------|------|---------|--------------|
-| **00_AI_CRITICAL_RULES.md** | 100 lines | Non-negotiable rules | **FIRST - ALWAYS** |
+| **MODULE_GUIDE.md** 🧭 | ~100 lines | **Project structure (source of truth):** modular layout under `internal/modules/`; overrides layered-layout docs | **FIRST - for structure** |
+| **00_AI_CRITICAL_RULES.md** | 100 lines | Non-negotiable rules | **FIRST - for rules** |
 | **AI_AGENT_RULES.md** | ~700 lines | Mandatory rules for AI (file/function size, testing, docs, errors) | **IMPORTANT** |
 | **AI_QUICK_REFERENCE.md** | 405 lines | Templates & checklists | Before writing code |
 | **DOCS_INDEX.md** ⭐ | ~500 lines | Master index with line refs | **BOOKMARK - use during work** |
@@ -52,6 +66,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 | File | Purpose |
 |------|---------|
+| **MODULE_GUIDE.md** 🧭 | Source of truth for project structure: modular layout (`internal/modules/<name>/`), how to add a module, cross-module communication |
 | **CODING_STANDARDS.md** | Comprehensive coding standards, naming conventions, best practices |
 | **DESIGN_PATTERNS.md** | Architecture patterns, layer responsibilities, implementation guides |
 | **CONFIGURATION.md** | Environment configuration, validation, secrets management |
@@ -71,25 +86,30 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 ### I Want To...
 
-**Write a new controller:**
-1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1)
-2. Template: `AI_QUICK_REFERENCE.md` → Templates section
-3. Details: `DESIGN_PATTERNS.md` lines 900-948
+**Add a new module (the modular way — start here):**
+1. Read: `MODULE_GUIDE.md` → "How to add a new module"
+2. Copy the reference module: `internal/modules/example/`
+3. Register it: one line in `buildModules()` in `internal/bootstrap/modules.go`
 
-**Write a new service:**
-1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1)
-2. Template: `AI_QUICK_REFERENCE.md` → Templates section
-3. Details: `DESIGN_PATTERNS.md` lines 984-1016
+**Write a new handler (HTTP layer of a module):**
+1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1 — struct-based + DI)
+2. Reference: `internal/modules/example/handler.go`
+3. Patterns: `AI_QUICK_REFERENCE.md` → Templates section; `DESIGN_PATTERNS.md` (layered terminology, see MODULE_GUIDE for the modular mapping)
+
+**Write a new service (business logic of a module):**
+1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1 — struct-based + DI)
+2. Reference: `internal/modules/example/service.go`
+3. Patterns: `AI_QUICK_REFERENCE.md` → Templates section; `DESIGN_PATTERNS.md` (layered terminology, see MODULE_GUIDE for the modular mapping)
 
 **Return a response:**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 2)
 2. Utils: `pkg/utils/response.go`
-3. Details: `CODING_STANDARDS.md` lines 1479-1584
+3. Details: `CODING_STANDARDS.md` → § 11 API Design (Response Utilities)
 
 **Write tests:**
-1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 3)
-2. Guide: `tests/README.md`
-3. Details: `CODING_STANDARDS.md` lines 840-1009
+1. Read: `MODULE_GUIDE.md` → Testing (co-locate `*_test.go` with the module; fake repo, no DB)
+2. Reference: `internal/modules/example/service_test.go`
+3. Guide: `tests/README.md` (shared mocks + legacy/integration tests)
 
 **Handle errors:**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 2)
@@ -97,7 +117,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 **Use dependency injection:**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 4)
-2. Details: `DESIGN_PATTERNS.md` lines 439-492
+2. Details: `DESIGN_PATTERNS.md` → § Core Patterns (Dependency Injection); modular DI: each module's `New(db)` constructor
 
 **Setup observability (health checks, metrics):**
 1. Guide: `OBSERVABILITY.md`
@@ -144,13 +164,18 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 **Why:** See `00_AI_CRITICAL_RULES.md` Tier 0, Rule 2
 
-### Mistake #4: Co-located Tests
+### Mistake #4: Tests in the Wrong Place
 ```
-❌ internal/app/services/auth_service_test.go  // Rejected
-✅ tests/unit/services/auth_service_test.go
+✅ internal/modules/auth/service_test.go        // Co-located with the module (preferred)
+✅ tests/unit/...                                // Legacy/shared tests still live here
 ```
 
-**Why:** See `00_AI_CRITICAL_RULES.md` Tier 0, Rule 3
+**Why:** Under the modular layout, **tests are co-located** with the module they cover
+(`internal/modules/<name>/*_test.go`) — see `MODULE_GUIDE.md` → Testing and
+`internal/modules/example/service_test.go`. Older docs that say "tests MUST live in `tests/`
+and co-located tests are rejected" describe the pre-refactor layered layout; `MODULE_GUIDE.md`
+overrides them. New modules should prefer in-package fakes and co-located tests; `tests/` remains
+for shared mocks and legacy/integration tests.
 
 ### Mistake #5: Exceeding File Size
 ```
@@ -182,6 +207,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 **Last Updated:** 2026-02-03
 
 **Recent Changes:**
+- **Modular refactor:** code is now organized by business module under `internal/modules/<name>/` (was `internal/app` / `internal/domain` layered layout). See `MODULE_GUIDE.md` (source of truth). Tests are now co-located with their module. The `CONTROLLER_COMPLIANCE_AUDIT.md` and `SERVICE_COMPLIANCE_AUDIT.md` docs are historical (they audited the pre-refactor layout).
 - API versioning (`/api/v1`), global rate limit, single config source, request_id/LogStart/LogFinish logging, pluggable EmailSender (see "Recent changes" above).
 - `AI_AGENT_RULES.md` is kept (important for AI agents).
 - Added "New developer onboarding" path in this file.
@@ -192,11 +218,13 @@ Welcome to the project documentation. This guide helps you navigate all document
 ## ✅ Checklist Before First Code Contribution
 
 ```
+□ Read MODULE_GUIDE.md (project structure — source of truth)
 □ Read 00_AI_CRITICAL_RULES.md (100 lines)
 □ Read AI_QUICK_REFERENCE.md (405 lines)
+□ Understand the modular layout (one folder per module under internal/modules/)
 □ Understand struct-based pattern requirement
 □ Understand response utilities requirement
-□ Understand tests/ directory requirement
+□ Understand co-located tests (internal/modules/<name>/*_test.go)
 □ Know file size limits (300 lines max)
 □ Know function size limits (100 lines max)
 ```

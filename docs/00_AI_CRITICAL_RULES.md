@@ -2,6 +2,18 @@
 
 > **For AI Agents:** Read this BEFORE touching ANY code. These are NON-NEGOTIABLE rules.
 
+> 🧭 **Structure:** Code lives in `internal/modules/<name>/` — package-by-feature, one vertical slice
+> per module (`handler → service → repository → model`). See **[MODULE_GUIDE.md](./MODULE_GUIDE.md)**
+> (the source of truth for the layout). The rules below — struct + constructor injection, consumer-defined
+> interfaces, no standalone functions, error-as-value + APIError mapping, file-size limits — are the
+> non-negotiables that apply *inside* that layout.
+
+> 🔐 **Security posture:** Every change must align with **OWASP Top 10:2025** and **OWASP WSTG**.
+> Before touching auth, input handling, PII, money movement, cryptography, or external I/O — review
+> the applicable OWASP categories. The always-on hard rules live in the auto-loaded root
+> **[`/CLAUDE.md`](../CLAUDE.md)**. When this service handles sensitive personal data or financial
+> operations, that obligation is Tier 0.
+
 ---
 
 ## 🚨 TIER 0: ABSOLUTE RULES (NEVER VIOLATE)
@@ -9,24 +21,35 @@
 ### 1. Architecture Pattern (MANDATORY)
 
 ```go
-❌ WRONG - Standalone Functions:
-func Register(ctx *gin.Context) { }
-func Login(ctx *gin.Context) { }
+// package auth (internal/modules/auth)
 
-✅ CORRECT - Struct-based with DI:
-type AuthController struct {
-    service *services.AuthService
+❌ WRONG - Standalone Functions on globals:
+func Register(c *gin.Context) { }
+func Login(c *gin.Context) { }
+
+✅ CORRECT - Struct-based with constructor injection:
+// handler.go — the HTTP layer is a Handler (not a "controller"); it depends on a
+// consumer-defined `service` interface, never a concrete type.
+type service interface {
+    Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error)
+    Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error)
 }
 
-func NewAuthController(service *services.AuthService) *AuthController {
-    return &AuthController{service: service}
+type Handler struct {
+    svc service
 }
 
-func (ctrl *AuthController) Register(c *gin.Context) { }
-func (ctrl *AuthController) Login(c *gin.Context) { }
+func NewHandler(svc service) *Handler {
+    return &Handler{svc: svc}
+}
+
+func (h *Handler) Register(c *gin.Context) { }
+func (h *Handler) Login(c *gin.Context) { }
 ```
 
-**Rule:** Controllers and Services MUST be structs with methods. NO standalone functions.
+**Rule:** Handlers and Services MUST be structs with methods, wired via constructors. NO
+standalone functions operating on package globals. Business logic lives on a `Service` method,
+behind a constructor-injected, consumer-defined interface.
 
 ### 2. Response Format (MANDATORY)
 
@@ -56,28 +79,41 @@ utils.Unauthorized(c, err, "Invalid credentials")
 ### 3. Test Location (MANDATORY)
 
 ```
-❌ WRONG - Co-located:
-internal/app/services/auth_service_test.go
+✅ CORRECT - Co-located with the module, white-box, fake repo (no DB):
+internal/modules/example/service_test.go  (package example)
 
-✅ CORRECT - In tests/ directory:
-tests/unit/services/auth_service_test.go (package services_test)
+❌ WRONG - Stranded in a layer-named tests/ tree:
+tests/unit/services/auth_service_test.go  (package services_test)
 ```
 
-**Rule:** ALL tests in `tests/` directory with `_test` package suffix.
+**Rule:** Unit-test a module **co-located** in `internal/modules/<name>/*_test.go`, in the
+**same package** (white-box `package <module>`) so the test can implement the module's unexported
+consumer-defined `repository` interface with an in-package fake (no DB). The `tests/` directory is
+for integration tests and shared legacy mocks. See `internal/modules/example/service_test.go` —
+this is the canonical template.
 
 ### 4. Dependency Injection (MANDATORY)
 
 ```go
-❌ WRONG - Direct instantiation:
-authRoutes.POST("/register", controllers.Register)
+❌ WRONG - Standalone func registered directly:
+api.POST("/auth/register", auth.Register)   // free function on a global
 
-✅ CORRECT - Constructor-based DI:
-authService := services.NewAuthService()
-authController := controllers.NewAuthController(authService)
-authRoutes.POST("/register", authController.Register)
+✅ CORRECT - Constructor-based DI, assembled once in module.go:
+// internal/modules/auth/module.go
+func New(db *gorm.DB) *Module {
+    svc := NewService(NewRepository(db)) // repo → service
+    return &Module{svc: svc, handler: NewHandler(svc)} // service → handler
+}
+
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    g := api.Group("/auth")
+    g.POST("/register", m.handler.Register)
+}
 ```
 
-**Rule:** Use constructor functions (New*) for dependency injection.
+**Rule:** Use constructor functions (`New*`) for dependency injection. Each layer's `New*` takes
+its dependency as a consumer-defined interface; the module's `New(db)` is the single place that
+assembles `repository → service → handler`.
 
 ---
 
@@ -140,104 +176,140 @@ logger.Errorf("failed to create user: %v", err)
 logger.Warnf("approaching rate limit: %d/%d", current, limit)
 ```
 
-### Router Organization
+### Routing (each module owns its routes)
+
+There is no central router. A module declares its own routes in
+`RegisterRoutes(api *gin.RouterGroup)`; `bootstrap` mounts every module under `/api/v1`.
 
 ```go
-❌ WRONG - All routes in index.go:
-// internal/app/routers/index.go (500+ lines)
+❌ WRONG - One giant central router with hand-wired controllers:
 func RegisterRoutes(router *gin.Engine) {
     authRoutes := router.Group("/auth")
     {
         authRoutes.POST("/register", ...)
         authRoutes.POST("/login", ...)
     }
-    userRoutes := router.Group("/users")
-    {
-        // ... 50+ routes ...
-    }
-    // ... becomes 500+ lines
+    // ... grows to 500+ lines as features pile up
 }
 
-✅ CORRECT - Separate files by feature:
-// internal/app/routers/auth_routes.go (40 lines)
-func RegisterAuthRoutes(router *gin.Engine, authService *services.AuthService) {
-    authController := controllers.NewAuthController(authService)
-    authRoutes := router.Group("/auth")
-    {
-        authRoutes.POST("/register", authController.Register)
-        authRoutes.POST("/login", authController.Login)
-    }
+✅ CORRECT - Each module registers its own routes:
+// internal/modules/auth/module.go
+func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
+    g := api.Group("/auth")
+    g.POST("/register", m.handler.Register)
+    g.POST("/login", m.handler.Login)
+
+    protected := api.Group("")
+    protected.Use(m.Middleware()) // JWT guard owned by the auth module
+    protected.GET("/profile", m.handler.Profile)
 }
 
-// internal/app/routers/index.go (50 lines)
-func RegisterRoutes(router *gin.Engine) {
-    authService := services.NewAuthService()
-    RegisterAuthRoutes(router, authService)
-    RegisterUserRoutes(router, userService, authService)
+// internal/bootstrap/modules.go — the single list of modules
+func buildModules(db *gorm.DB) []Module {
+    return []Module{
+        auth.New(db),
+        example.New(db),
+        // newmodule.New(db),  ← adding a module is ONE line
+    }
 }
 ```
 
 **Rules:**
-- One file per controller/feature: `{feature}_routes.go`
-- Function naming: `Register{Feature}Routes()`
-- Max 100 lines per route file
-- Main `index.go` only calls Register functions
+- A module owns its routes in `RegisterRoutes(api *gin.RouterGroup)` (mounted under `/api/v1`).
+- Adding a module is one line in `buildModules()` (`internal/bootstrap/modules.go`).
+- System probes (`/health`, `/metrics`) are mounted at the **root** by the `health` system
+  module via `RegisterSystem(r)`, not under `/api/v1`.
+
+### Request Tracing with LogStart/LogFinish (MANDATORY in handlers)
+
+```go
+func (h *Handler) GetUser(c *gin.Context) {
+    ctx, start := logger.LogStart(c.Request.Context(), "users.Handler.GetUser")
+    defer func() { /* LogFinish called explicitly below */ }()
+
+    id := c.Param("id")
+    user, err := h.svc.GetUserByID(ctx, id)
+    if err != nil {
+        logger.LogFinish(ctx, "users.Handler.GetUser", err, start)
+        utils.NotFound(c, err, "User not found")
+        return
+    }
+    logger.LogFinish(ctx, "users.Handler.GetUser", nil, start)
+    utils.Ok(c, user, "User retrieved successfully")
+}
+```
+
+**Span name convention:** `<module>.<Type>.<Method>` — e.g., `auth.Handler.Login`, `auth.Service.Register`.
 
 ---
 
 ## 📁 File Structure Reference
 
+See [MODULE_GUIDE.md](./MODULE_GUIDE.md) for the full tree. The essentials:
+
 ```
-project/
+.
+├── main.go                       → 3 lines: bootstrap.Run()
 ├── internal/
-│   ├── app/
-│   │   ├── controllers/       → Struct-based, use response utils
-│   │   ├── services/          → Struct-based, business logic
-│   │   ├── dto/              → Request/Response structs
-│   │   ├── middlewares/      → Gin middleware functions
-│   │   └── routers/          → Route registration (ONE FILE PER FEATURE)
-│   │       ├── index.go      → Main router (calls all Register functions)
-│   │       ├── auth_routes.go    → Auth routes only
-│   │       ├── user_routes.go    → User routes only
-│   │       └── product_routes.go → Product routes only
-│   └── domain/
-│       ├── models/           → GORM entities
-│       └── repositories/     → Function-based CRUD
-├── pkg/
-│   └── utils/
-│       └── response.go       → MUST use these utilities
-└── tests/                    → ALL tests here
-    ├── unit/
-    │   ├── controllers/
-    │   ├── services/
-    │   └── repositories/
-    └── integration/
+│   ├── bootstrap/                → the ONLY per-service wiring
+│   │   ├── bootstrap.go          →   Run(): config → db → modules → migrate → serve
+│   │   ├── modules.go            →   Module interface + buildModules() (the module list)
+│   │   ├── server.go             →   gin engine + global middleware + route mounting
+│   │   └── swagger.go            →   OpenAPI/Swagger UI (debug only)
+│   ├── migrations/               → schema (migration.go: AutoMigrate; sql/ versioned)
+│   └── modules/                  → ← business modules (work happens here)
+│       ├── example/              →   THE reference module — copy it to make a new one
+│       │   ├── model.go          →     GORM model(s) the module owns
+│       │   ├── dto.go            →     request/response types (optional)
+│       │   ├── repository.go     →     data access (holds injected *gorm.DB, no globals)
+│       │   ├── service.go        →     business logic (defines the repository interface)
+│       │   ├── handler.go        →     HTTP layer (defines the service interface)
+│       │   ├── module.go         →     New(db), Name(), Models(), RegisterRoutes(), API()
+│       │   └── service_test.go   →     co-located test (no DB — uses a fake repo)
+│       ├── auth/                 →   JWT auth; exposes Middleware() and Auth() to others
+│       └── health/               →   system module: /health, /metrics at ROOT
+└── pkg/                          → ← cross-cutting kit; MUST never import internal/
+    ├── config/  logger/  metrics/  types/  utils/  (utils/response.go → MUST use these)
+    ├── middleware/               →   cors, request_id, request_log, metrics, rate_limit
+    └── database/                 →   DbConnection(master, replica), GetDB()
 ```
+
+> Unit tests are **co-located** in `internal/modules/<name>/*_test.go`. The `tests/` directory
+> holds integration tests and shared legacy mocks only.
 
 ---
 
 ## ⚡ Quick Decision Tree
 
 ```
-Writing a controller?
-  → Struct-based? YES → Use response utils? YES → ✅
-  → Standalone func? ❌ STOP
+Writing a handler?
+  → Struct + consumer-defined service interface? YES → Use response utils? YES → ✅
+  → Standalone func / business logic in handler? ❌ STOP
 
 Writing a service?
-  → Struct-based? YES → Has tests in tests/? YES → ✅
+  → Struct + consumer-defined repository interface? YES
+  → Co-located *_test.go with a fake repo? YES → ✅
   → No tests? ❌ STOP
 
+Writing a repository?
+  → Accepts injected *gorm.DB (not database.GetDB())? YES → ✅
+  → Calling database.GetDB() directly? ❌ STOP
+
 Returning response?
-  → Using utils.Ok/Created/etc? YES → ✅
+  → Using utils.Ok/Created/RespondWithAPIError? YES → ✅
   → Using c.JSON directly? ❌ STOP
 
 Adding routes?
-  → Separate {feature}_routes.go file? YES → ✅
-  → All in index.go? ❌ STOP
+  → In the module's RegisterRoutes(api)? YES → ✅
+  → Reaching for a central router? ❌ STOP
+
+New module?
+  → Added one line to buildModules()? YES → ✅
+  → Wired it anywhere else? ❌ STOP
 
 File approaching 250 lines?
-  → Split now? YES → ✅
-  → Keep adding? ❌ STOP
+  → Split into another file in the SAME module package? YES → ✅
+  → Keep adding (or make a subfolder)? ❌ STOP
 ```
 
 ---
@@ -258,18 +330,19 @@ Non-essential files are listed in `.gitignore` (e.g. `PROJECT_ANALYSIS.md`). Bef
 
 ## 📚 For More Details
 
-- Full standards: `CODING_STANDARDS.md` (read sections marked CRITICAL)
-- Design patterns: `DESIGN_PATTERNS.md` (read sections 1-4)
-- Quick templates: `AI_QUICK_REFERENCE.md`
+- Layout source of truth: [`MODULE_GUIDE.md`](./MODULE_GUIDE.md)
+- Full standards: [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) (read the sections marked CRITICAL)
+- Design patterns: [`DESIGN_PATTERNS.md`](./DESIGN_PATTERNS.md) (read §1–§6)
+- Quick templates: [`AI_QUICK_REFERENCE.md`](./AI_QUICK_REFERENCE.md)
 
 **Critical sections in CODING_STANDARDS.md:**
-- Lines 900-1100: Struct-based patterns
-- Lines 1429-1475: Response format
-- Lines 1479-1584: Response utilities
+- §3 Code Structure — handler → service → repository, consumer-defined interfaces
+- §11.3 Response Format
+- §11.4 Response Utilities (`pkg/utils`)
 
 **Critical sections in DESIGN_PATTERNS.md:**
-- Lines 900-1016: Controller & Service patterns
-- Lines 439-492: Dependency injection
+- §6 Implementation Patterns — Handler / Service / Repository / Module wiring
+- §3.6 Dependency Injection
 
 ---
 
