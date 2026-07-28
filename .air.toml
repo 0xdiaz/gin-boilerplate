@@ -1,0 +1,21 @@
+# Config file for [Air](https://github.com/cosmtrek/air) in TOML format
+
+root = "."
+tmp_dir = "/tmp"
+
+[build]
+cmd = "go build -o ./tmp/main main.go && chmod +x tmp/main"
+bin = "./tmp/main"
+full_bin = "./tmp/main"
+log = "air_errors.log"
+include_ext = ["go", "yaml", "env"]
+exclude_dir = ["tmp"]
+delay = 500 # ms
+
+[log]
+time = true
+
+[color]
+
+[misc]
+clean_on_exit = true

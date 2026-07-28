@@ -1,0 +1,58 @@
+# =========================
+# Environment & Config
+# =========================
+.env
+*.log
+
+# =========================
+# Go Binaries & Build Outputs
+# =========================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.coverprofile
+*.prof
+*.pprof
+main
+boilerplate-gin-dat
+
+# =========================
+# Dependencies
+# =========================
+vendor/
+
+# =========================
+# Editor & IDE
+# =========================
+.idea/
+.vscode/
+.cursor/
+*.swp
+
+# =========================
+# Temporary & Build Folders
+# =========================
+tmp/
+dist/
+build/
+
+# =========================
+# OS Generated Files
+# =========================
+.DS_Store
+Thumbs.db
+
+
+# =========================
+# Secrets
+# =========================
+secrets/
+
+# =========================
+# Local-only / non-essential docs (do not commit)
+# =========================
+PROJECT_ANALYSIS.md

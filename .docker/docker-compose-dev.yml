@@ -1,0 +1,50 @@
+name: go-gin-boilerplate
+
+services:
+  postgres_db:
+    container_name: gin_pg_db
+    image: postgres:16-alpine
+    ports:
+      - "5434:5432"
+    env_file:
+      - ../.env
+    environment:
+      - POSTGRES_USER=${MASTER_DB_USER}
+      - POSTGRES_PASSWORD=${MASTER_DB_PASSWORD}
+      - POSTGRES_DB=${MASTER_DB_NAME}
+    volumes:
+      - gin_postgres_data:/var/lib/postgresql/data/
+    restart: always
+
+  pgadmin:
+    container_name: gin_pgadmin4_container
+    image: dpage/pgadmin4:latest
+    restart: always
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=root
+    logging:
+      driver: none
+    volumes:
+      - gin_pgadmin_data:/var/lib/pgadmin
+
+  server:
+    container_name: gin_dev_go_server
+    build:
+      context: ..
+      dockerfile: .docker/Dockerfile-dev
+    ports:
+      - "${SERVER_PORT}:${SERVER_PORT}"
+    depends_on:
+      - postgres_db
+    volumes:
+      - ..:/app
+    restart: always
+    env_file:
+      - ../.env
+
+volumes:
+  gin_postgres_data:
+  gin_pgadmin_data:

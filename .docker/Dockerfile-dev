@@ -1,0 +1,17 @@
+#Dockerfile Development
+FROM golang:1.25-alpine
+
+WORKDIR /app
+
+# Set permission tmp folder agar Air bisa buat binary executable
+RUN mkdir -p /app/tmp/ && chmod -R 777 /app/tmp/
+
+# Install air (untuk hot reload)
+RUN go install github.com/air-verse/air@latest
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+CMD ["air"]
