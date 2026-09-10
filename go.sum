@@ -2,8 +2,8 @@ github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161 h1:L/gRVlceqvL25
 github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
-github.com/0xdiaz/Datatables-Gin v0.0.0-20251110095450-174f5b977407 h1:GQ2/v3g4c4sL++EPKdPT0cgtueLMh5YfeepcwKXK/Y8=
-github.com/0xdiaz/Datatables-Gin v0.0.0-20251110095450-174f5b977407/go.mod h1:1gt4zNKZ/l3aBlDof9Wlqu5PQBsuD6Y631cXKdGsT/A=
+github.com/bonarizki-dat/Datatables-Gin v0.0.0-20251110095450-174f5b977407 h1:GQ2/v3g4c4sL++EPKdPT0cgtueLMh5YfeepcwKXK/Y8=
+github.com/bonarizki-dat/Datatables-Gin v0.0.0-20251110095450-174f5b977407/go.mod h1:1gt4zNKZ/l3aBlDof9Wlqu5PQBsuD6Y631cXKdGsT/A=
 github.com/bytedance/gopkg v0.1.3 h1:TPBSwH8RsouGCBcMBktLt1AymVo2TVsBVCY4b6TnZ/M=
 github.com/bytedance/gopkg v0.1.3/go.mod h1:576VvJ+eJgyCzdjS+c4+77QF3p7ubbtiKARP3TxducM=
 github.com/bytedance/sonic v1.14.1 h1:FBMC0zVz5XUmE4z9wF4Jey0An5FueFvOsTKKKtwIl7w=

@@ -836,7 +836,7 @@ SERVER_SHUTDOWN_TIMEOUT=10
 - **[golang-migrate](https://github.com/golang-migrate/migrate)** - Database migrations
 
 ### Custom Libraries
-- **[Datatables-Gin](https://github.com/0xdiaz/Datatables-Gin)** - DataTables integration
+- **[Datatables-Gin](https://github.com/bonarizki-dat/Datatables-Gin)** - DataTables integration
 
 ---
 
