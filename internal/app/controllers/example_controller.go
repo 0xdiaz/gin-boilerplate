@@ -1,11 +1,11 @@
 package controllers
 
 import (
-	"github.com/0xdiaz/Datatables-Gin/datatables"
-	"github.com/0xdiaz/Datatables-Gin/datatables/dto"
 	"github.com/0xdiaz/gin-boilerplate/internal/app/services"
 	"github.com/0xdiaz/gin-boilerplate/pkg/logger"
 	"github.com/0xdiaz/gin-boilerplate/pkg/utils"
+	"github.com/bonarizki-dat/Datatables-Gin/datatables"
+	"github.com/bonarizki-dat/Datatables-Gin/datatables/dto"
 	"github.com/gin-gonic/gin"
 )
 
