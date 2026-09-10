@@ -8,18 +8,20 @@
 
 ## Overview
 
-Authentication is a self-contained module at `internal/modules/auth/`. It owns its full vertical slice (`handler → service → repository → model`) and exposes a small public surface to the rest of the app via `module.go` (see [MODULE_GUIDE.md](./MODULE_GUIDE.md)):
+Authentication spans the standard layers (see [MODULE_GUIDE.md](./MODULE_GUIDE.md)), with the service large enough to warrant its own package:
 
-- `auth.New(db)` — build the module.
-- `Module.RegisterRoutes(api)` — mount auth routes under `/api/v1`.
-- `Module.Middleware()` — the JWT guard, handed to any module that needs to protect routes.
-- `Module.Auth()` — the `auth.Servicer` contract (e.g. `ValidateToken`) for other modules.
+- `internal/app/services/auth/` — `AuthService` plus its sentinel errors, split across `auth_service.go` and `auth_service_tokens.go`.
+- `internal/app/services/auth/interface.go` — the `AuthServicer` contract (e.g. `ValidateToken`), consumed by the controller and the middleware.
+- `internal/app/controllers/auth_controller.go` — the HTTP layer.
+- `internal/app/routers/auth_routes.go` — `RegisterAuthRoutes(group, authService)`.
+- `internal/app/middlewares/auth.go` — `AuthMiddleware(authService)`, the JWT guard for protected routes.
+- `internal/domain/repositories/user_repo.go` and `refresh_token_repo.go` — data access.
 
-This module provides a complete authentication system with the following features:
+Authentication provides the following features:
 
 - ✅ User Registration
 - ✅ User Login
-- ✅ JWT Access Token (24 hours expiry)
+- ✅ JWT Access Token (15 minutes expiry, configurable)
 - ✅ Refresh Token Mechanism
 - ✅ Password Reset Flow
 - ✅ Token Rotation (security best practice)
@@ -139,8 +141,10 @@ User → POST /api/v1/auth/register → auth.Handler → auth.Service → auth.R
 - Refresh token stored in database (can be revoked)
 
 **Token Lifecycle:**
-- Access Token: 24 hours expiry (configurable)
-- Refresh Token: No expiry, but rotated on each use
+- Access Token: 15 minutes by default (`ACCESS_TOKEN_TTL_MINUTES`). Short on purpose: it is
+  stateless and cannot be revoked, so the TTL bounds how long it keeps working after logout.
+- Refresh Token: 7 days by default (`REFRESH_TOKEN_TTL_DAYS`), hashed at rest and rotated on
+  every use. Replaying a rotated token revokes the whole family.
 
 **Error responses:**
 - `400 Bad Request` — Missing or invalid refresh_token in body.
@@ -258,7 +262,7 @@ Delivery is handled by a pluggable **EmailSender**:
 
 ### Database Schema
 
-**User Model Fields** (`internal/modules/auth/model.go`):
+**User Model Fields** (`internal/domain/models/user_model.go`):
 ```go
 type User struct {
     ID       uint   `json:"id" gorm:"primaryKey"`
@@ -296,7 +300,7 @@ func (u *User) TableName() string { return "users" }
 - **Claims:**
   - `user_id`: User's database ID
   - `email`: User's email
-  - `exp`: Expiry timestamp (24 hours)
+  - `exp`: Expiry timestamp (15 minutes by default, `ACCESS_TOKEN_TTL_MINUTES`)
   - `iat`: Issued at timestamp
 - **Secret:** Environment variable `JWT_SECRET` (min 32 chars)
 - **Storage:** Client-side only (LocalStorage/Memory)
@@ -411,7 +415,7 @@ All errors follow the standard response format:
 
 ### Unit Tests
 
-Per the modular layout, prefer co-locating tests with the module: `internal/modules/auth/*_test.go`, unit-testing `Service` against a fake `Repository` (no DB needed) — see `internal/modules/example/service_test.go` for the recipe. Legacy auth tests still live under `tests/unit/services/auth_service_test.go` and `tests/unit/controllers/auth_controller_test.go`.
+Unit tests live in the `tests/` tree: `tests/unit/services/auth_service_test.go` drives `AuthService` against the fakes in `tests/mocks/` (no DB needed), and `tests/unit/controllers/auth_controller_test.go` exercises the controller with `httptest`. See `tests/unit/services/auth_service_test.go` for the canonical recipe.
 
 **Test Coverage:**
 - ✅ RefreshToken functionality
@@ -463,14 +467,14 @@ Configuration is validated on startup:
 
 ### Database Migration
 
-The `users` table is created/updated automatically on startup. `bootstrap.Run()` collects every module's models from `Module.Models()` (auth declares `&User{}`) and passes them to `migrations.Run(db, models)`:
+The `users` table is created by a versioned migration applied on startup. `main.go` calls `migrations.Migrate()`, which applies the versioned SQL files in `internal/adapters/database/migrations/sql/` (the users table comes from `000001_create_users_table.up.sql`) and is fatal on failure:
 
 ```bash
 # Using GORM AutoMigrate (development)
 go run main.go  # Automatically migrates owned models on startup
 
 # Using versioned SQL (production)
-# Add versioned SQL under internal/migrations/sql/ (run via golang-migrate)
+# Add versioned SQL under internal/adapters/database/migrations/sql/ (run via golang-migrate)
 ```
 
 ### Fields Added
@@ -496,7 +500,7 @@ New fields added to `users` table:
 
 ### Rate Limiting
 
-Rate limiting is applied globally to the `/api/v1` group in `bootstrap.buildEngine` (`internal/bootstrap/server.go`), so auth endpoints are covered. It is per client IP (token bucket) and reads limits from config inside the middleware (`pkg/middleware/rate_limit.go`):
+Rate limiting is applied to the `/api/v1` group in `RegisterRoutes` (`internal/app/routers/index.go`), so auth endpoints are covered. It is per client IP (token bucket) and reads limits from config inside the middleware (`internal/app/middlewares/rate_limit.go`):
 - **Env vars:** `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST` (see [CONFIGURATION.md](CONFIGURATION.md))
 - **Defaults:** 100 requests per second, burst 200
 - **Response when exceeded:** 429 Too Many Requests

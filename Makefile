@@ -23,19 +23,19 @@ MIGRATE_PATH = internal/adapters/database/migrations/sql
 
 dev:
 	if [ ! -f .env ]; then cp .env.example .env; fi;
-	docker-compose -f .docker/docker-compose-dev.yml down
-	docker-compose -f .docker/docker-compose-dev.yml up
+	docker-compose --env-file .env -f .docker/docker-compose-dev.yml down
+	docker-compose --env-file .env -f .docker/docker-compose-dev.yml up
 
 build:
-	docker-compose -f .docker/docker-compose-prod.yml build
-	docker-compose -f .docker/docker-compose-dev.yml down build
+	docker-compose --env-file .env -f .docker/docker-compose-prod.yml build
+	docker-compose --env-file .env -f .docker/docker-compose-dev.yml down build
 
 production:
-	docker-compose -f .docker/docker-compose-prod.yml up -d --build
+	docker-compose --env-file .env -f .docker/docker-compose-prod.yml up -d --build
 
 clean:
-	docker-compose -f .docker/docker-compose-prod.yml down -v
-	docker-compose -f .docker/docker-compose-dev.yml down -v
+	docker-compose --env-file .env -f .docker/docker-compose-prod.yml down -v
+	docker-compose --env-file .env -f .docker/docker-compose-dev.yml down -v
 
 run:
 	go run main.go

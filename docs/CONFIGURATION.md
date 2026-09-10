@@ -116,7 +116,7 @@ if config.IsDebugEnabled() {
 
 **Example 1: Enable SQL Logging via Config**
 ```go
-// pkg/database/database.go
+// internal/adapters/database/database.go
 func DbConnection(masterDSN, replicaDSN string) error {
     // SQL logging is driven by MASTER_DB_LOG_MODE (config.Get().Database.LogMode),
     // and the read replica is only registered when Debug is off.
@@ -136,32 +136,44 @@ func DbConnection(masterDSN, replicaDSN string) error {
 
 **Example 2: Seed Test Data Only in Development**
 ```go
-// internal/migrations/migration.go owns AutoMigrate; bootstrap collects each
-// module's Models() and calls migrations.Run(db, models). Seed conditionally:
-func Run(db *gorm.DB, models []any) error {
-    if err := db.AutoMigrate(models...); err != nil {
-        return err
-    }
-    // Seed test data only in development
-    if config.IsDevelopment() {
-        seedTestData(db)
-    }
-    return nil
+// main.go applies migrations unconditionally, then seeds only in development.
+// Seeders live in internal/adapters/database/seeders/ and must be idempotent.
+if err := migrations.Migrate(); err != nil {
+    logger.Fatalf("database migration failed: %v", err)
 }
 
-func seedTestData(db *gorm.DB) {
-    logger.Infof("Seeding test data for development...")
-    // Create test users, etc.
+if config.IsDevelopment() {
+    if err := seeders.Run(); err != nil {
+        logger.Fatalf("database seeding failed: %v", err)
+    }
+}
+
+// internal/adapters/database/seeders/user_seeder.go — idempotent: it checks for an existing
+// row before inserting, so restarting the app never duplicates data.
+func seedDemoUsers() error {
+    userRepo := repositories.NewUserRepository()
+
+    for _, u := range demoUsers {
+        existing, err := userRepo.GetUserByEmail(u.Email)
+        if err != nil {
+            return err
+        }
+        if existing != nil {
+            continue // already seeded
+        }
+        // ... create the user
+    }
+    return nil
 }
 ```
 
 **Example 3: Rate Limits From Environment**
 
-Rate limit is read inside `RateLimitMiddleware()` from `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (see `pkg/middleware/rate_limit.go`). If unset or ≤0, defaults (100 rps, 200 burst) are used. Set these in each environment's `.env` (e.g. lower in production, higher in development).
+Rate limit is read inside `RateLimitMiddleware()` from `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` (see `internal/app/middlewares/rate_limit.go`). If unset or ≤0, defaults (100 rps, 200 burst) are used. Set these in each environment's `.env` (e.g. lower in production, higher in development).
 
 **Example 4: Enable Profiling in Non-Production**
 ```go
-// internal/bootstrap/server.go (buildEngine), on the gin engine `r`
+// internal/app/routers/router.go (buildEngine), on the gin engine `r`
 if !config.IsProduction() {
     // Enable pprof profiling endpoints
     r.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
@@ -225,7 +237,7 @@ The following environment variables **MUST** be set. The application will not st
 | `APP_ENV` | Application environment | `development` | Values: `development`, `staging`, `production` |
 | `DEBUG` | Debug mode | Auto (true in dev) | Set to `True` only in development |
 | `TRUSTED_PROXIES` | Trusted reverse-proxy IPs/CIDRs | _(empty)_ | Comma-separated. Empty = trust none (use real peer IP); set to proxy CIDR in prod. |
-| `SERVER_TIMEZONE` | Server timezone | `UTC` | Must be valid IANA timezone (e.g. UTC, Asia/Jakarta). Default applied in `config.SetupConfig()` when unset; `bootstrap.Run()` sets `time.Local` from it. |
+| `SERVER_TIMEZONE` | Server timezone | `UTC` | Must be valid IANA timezone (e.g. UTC, Asia/Jakarta). Default applied in `config.SetupConfig()` when unset; `main.go` sets `time.Local` from it. |
 | `RATE_LIMIT_RPS` | Rate limit (requests per second per IP) | `100` | Applied to all `/api/v1` routes. Set to 0 or omit to use default. |
 | `RATE_LIMIT_BURST` | Rate limit burst size | `200` | Max tokens in bucket. Set to 0 or omit to use default. |
 | `MASTER_DB_LOG_MODE` | Enable DB query logging | `True` | Set to `False` in production |
@@ -299,8 +311,7 @@ func ServerConfig() string
 The application automatically validates configuration when starting:
 
 ```go
-// main.go is just bootstrap.Run(); SetupConfig runs first inside
-// bootstrap.Run() (internal/bootstrap/bootstrap.go):
+// main.go calls SetupConfig() first, before anything else:
 if err := config.SetupConfig(); err != nil {
     logger.Fatalf("config SetupConfig() error: %s", err)
 }
@@ -566,7 +577,7 @@ if config.IsProduction() {
 **1. Conditional Database Logging**
 
 ```go
-// pkg/database/database.go — SQL logging is driven by MASTER_DB_LOG_MODE.
+// internal/adapters/database/database.go — SQL logging is driven by MASTER_DB_LOG_MODE.
 func DbConnection(masterDSN, replicaDSN string) error {
     logMode := config.Get().Database.LogMode // from MASTER_DB_LOG_MODE
     // loglevel = Info when logMode, else Silent
@@ -577,14 +588,15 @@ func DbConnection(masterDSN, replicaDSN string) error {
 **2. Environment-Specific Seeding**
 
 ```go
-// internal/migrations/migration.go — bootstrap passes each module's Models() here.
-func Run(db *gorm.DB, models []any) error {
-    db.AutoMigrate(models...)
+// main.go — migrations always run; seeding is development-only.
+if err := migrations.Migrate(); err != nil {
+    logger.Fatalf("database migration failed: %v", err)
+}
 
-    if config.IsDevelopment() {
-        seedTestData(db) // Only seed in development
+if config.IsDevelopment() {
+    if err := seeders.Run(); err != nil { // Only seed in development
+        logger.Fatalf("database seeding failed: %v", err)
     }
-    return nil
 }
 ```
 
@@ -592,10 +604,10 @@ func Run(db *gorm.DB, models []any) error {
 
 ```go
 // Rate limit is read from RATE_LIMIT_RPS / RATE_LIMIT_BURST in .env by RateLimitMiddleware().
-// It is applied globally to the /api/v1 group in bootstrap.buildEngine (pkg/middleware).
+// It is applied to the /api/v1 group in RegisterRoutes (internal/app/routers/index.go).
 // Set different values per environment (e.g. RATE_LIMIT_RPS=10 in production, 100 in development).
-v1 := r.Group("/api/v1")
-v1.Use(middleware.RateLimitMiddleware())
+apiV1 := route.Group("/api/v1")
+apiV1.Use(middlewares.RateLimitMiddleware())
 ```
 
 **4. Development-Only Debug Endpoints**
@@ -663,12 +675,12 @@ func InitLogger() {
 **8. Conditional Middleware**
 
 ```go
-// In bootstrap.buildEngine, on the gin engine `r`. Middleware lives in pkg/middleware.
+// In routers.SetupRoute(), on the gin engine. Middleware lives in internal/app/middlewares.
 if !config.IsDevelopment() {
     r.Use(middleware.MetricsMiddleware())
 }
 
-// Security headers only in production (add such a middleware to pkg/middleware)
+// Security headers only in production (add such a middleware to internal/app/middlewares)
 if config.IsProduction() {
     r.Use(middleware.SecurityHeadersMiddleware())
 }

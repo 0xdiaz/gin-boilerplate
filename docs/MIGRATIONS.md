@@ -1,122 +1,121 @@
 # Database Migrations
 
-The **GORM structs are the single source of truth** for the schema. Versioned SQL
-migrations are *generated* from those structs with [Atlas](https://atlasgo.io) and
-checked into `./migrations`. The app no longer relies on `AutoMigrate` in
-production.
+Schema changes are **versioned SQL files** applied by [golang-migrate](https://github.com/golang-migrate/migrate).
+GORM models are used for querying only — they never drive the schema.
+
+For the full command reference (installing the CLI, forcing a dirty version, etc.), see
+[`internal/adapters/database/migrations/sql/README.md`](../internal/adapters/database/migrations/sql/README.md).
 
 ## Why
 
-`AutoMigrate` is additive-only: it adds columns/indexes and widens types, but it
-**cannot** do type changes (e.g. `bigint → uuid`), column drops, renames, or data
-backfills — it errors and crash-loops the service on boot. Versioned migrations
-make every schema change explicit, reviewed, ordered, and reversible.
+`AutoMigrate` is additive-only: it adds columns, indexes and widens types, but it never drops a
+column, never renames one, and never tells you what it is about to do. That is fine for a
+scratch database and unacceptable for one holding real rows.
+
+Versioned SQL gives us the three things AutoMigrate cannot:
+
+- **A record of what ran** — the `schema_migrations` table names the current version.
+- **A rollback path** — every change ships with its `.down.sql`.
+- **Review** — the exact DDL that will hit production is in the diff.
+
+It is also lock-protected, so several instances starting at once cannot race each other.
 
 ## Layout
 
-| Path | What |
+| Path | Purpose |
 |---|---|
-| `cmd/atlas-loader` | Prints the DDL for every model (`bootstrap.AllModels()`). Atlas's schema source. |
-| `atlas.hcl` | Atlas config (`env "gorm"`): loader as source, `./migrations` as the dir. |
-| `migrations/*.sql` | Versioned migrations + `atlas.sum` (integrity checksum). **Schema only.** |
-| `seeds/` + `cmd/seed` | All seed rows, in prod/dev/sample buckets. See `seeds/README.md`. |
-| `internal/adapters/database/migrations/` | Boot-time `AutoMigrate` runner (dev/test only, gated by `DB_AUTOMIGRATE`). |
-| `.docker/entrypoint.sh` | Applies migrations on container start when `DB_MIGRATE=atlas`. |
+| `internal/adapters/database/migrations/migration.go` | The runner. `Migrate()` reuses the open GORM connection and applies everything pending. |
+| `internal/adapters/database/migrations/sql/` | The versioned files: `NNNNNN_description.up.sql` and `.down.sql`. |
+| `internal/adapters/database/seeders/` | Development-only demo data. **Not** migrations — see below. |
+| `main.go` | Calls `migrations.Migrate()` at startup and treats failure as fatal. |
 
-## Prerequisites
-
-- The **official** Atlas binary (the community build lacks the GORM provider):
-  `curl -sSf https://atlasgo.sh | sh`
-- Docker (Atlas spins an ephemeral Postgres to plan migrations).
+Migrations run **automatically on every boot**, before the HTTP server starts. A failed
+migration is fatal by design: the server must never serve requests against a schema that is
+missing columns the code expects.
 
 ## Creating a migration
 
-1. Edit the GORM struct(s) as usual.
-2. Generate the migration from the model diff:
-   ```bash
-   atlas migrate diff <short_name> --env gorm
-   ```
-   → writes `migrations/<timestamp>_<short_name>.sql` and updates `atlas.sum`.
-3. **Review / edit the generated SQL.** Atlas nails mechanical changes (add
-   column/index, widen type). For anything with intent it can't infer, hand-edit:
-   - **Renames** (it emits drop+add → rewrite to `ALTER ... RENAME`).
-   - **Data transforms / backfills** (e.g. `bigint → uuid`: add the new column,
-     backfill, repoint FKs, drop the old — or, in dev, drop+recreate).
-4. Verify it applies and the suite passes against a scratch DB:
-   ```bash
-   atlas migrate apply --dir file://migrations --url "$SCRATCH_DB_URL"
-   go test ./...
-   ```
-5. Commit the struct change **and** the migration in the same PR.
+1. Pick the next version number — zero-padded, six digits, one higher than the last file in
+   `sql/`.
+2. Create **both** files:
 
-CI (`.github/workflows/ci.yml`) runs:
-- `atlas migrate validate` — directory integrity + `atlas.sum`.
-- a **drift check** — regenerates the diff and fails if the models changed without
-  a committed migration. (This is the guard that prevents the struct/DB drift that
-  previously crash-looped dev.)
+```
+internal/adapters/database/migrations/sql/000007_create_products_table.up.sql
+internal/adapters/database/migrations/sql/000007_create_products_table.down.sql
+```
+
+3. Write the forward change:
+
+```sql
+-- Create products table
+-- Migration: 000007_create_products_table
+-- Created to match internal/domain/models/product_model.go
+
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    -- Money is an integer in the smallest currency unit. Never FLOAT/DOUBLE.
+    price_cents BIGINT NOT NULL CHECK (price_cents >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_name ON products (name);
+
+COMMENT ON TABLE products IS 'Sellable products';
+```
+
+4. Write the rollback:
+
+```sql
+-- Rollback products table creation
+-- Migration: 000007_create_products_table
+
+DROP TABLE IF EXISTS products;
+```
+
+5. Keep the GORM model in `internal/domain/models/` in sync with the DDL — column names,
+   nullability, and types.
+
+6. Verify by starting the app against a scratch database and checking the applied version:
+
+```bash
+docker compose --env-file .env -f .docker/docker-compose-dev.yml up -d postgres_db
+go run main.go
+```
+
+### Rules
+
+- **Never edit a migration that has already been applied** anywhere. Add a new pair instead.
+- **Every `.up.sql` has a `.down.sql`.** A rollback that only says `DROP TABLE` is fine; a
+  missing one is not.
+- **Constraints belong in the migration**, not only in Go. A `CHECK` on a status column and a
+  `UNIQUE` on a natural key are enforced by the database, so a bug in the application cannot
+  write a row that violates them.
+- **Keep status constants in sync** with their `CHECK` constraint — e.g.
+  `models.RefreshTokenStatusAvailable` and the `CHECK (status IN ('available','sold'))` in
+  `000002_add_user_auth_tokens.up.sql`.
 
 ## Rollback
 
-- **Incident response = roll back the *app***, not the schema.
-- Schema down: `atlas migrate down --env gorm 1` (or `--to-version <v>`). Atlas
-  plans the reverse. **A down migration cannot recover dropped data** — for
-  destructive changes prefer **expand/contract** (add new → migrate app → drop old
-  in a later migration) so app rollback alone is a safe undo.
-
-## Applying in environments
-
-- **Local/dev:** keep `DB_AUTOMIGRATE=true` for fast iteration; run
-  `atlas migrate diff` when you're ready to commit a change.
-- **Production:** set `DB_MIGRATE=atlas` and `DB_AUTOMIGRATE=false`. The entrypoint
-  runs `atlas migrate apply` (advisory-locked) before the app starts; a bad
-  migration aborts the deploy with a clear error instead of crash-looping.
-- **Locking caveat (hot tables):** a plain `CREATE UNIQUE INDEX` takes a `SHARE`
-  lock that blocks writes for the whole build, and `ALTER COLUMN … SET NOT NULL`
-  takes `ACCESS EXCLUSIVE` + a full-table scan. On small tables this is sub-second;
-  on large production tables it is a write outage. Before applying such a migration
-  to a large prod table:
-  - Use `CREATE UNIQUE INDEX CONCURRENTLY` (standalone, non-transactional file) instead.
-  - Split `SET NOT NULL` into: add `CHECK ... NOT VALID` → `VALIDATE CONSTRAINT` → `SET NOT NULL`.
-  - Apply in a maintenance window if neither option is feasible.
-
-## Cutover for an existing database (baseline)
-
-A database created by the old `AutoMigrate` path has the tables but no Atlas
-revision history. Baseline it once so Atlas doesn't try to recreate existing
-tables:
+`Migrate()` only ever moves forward. To step back, use the golang-migrate CLI against the
+same directory:
 
 ```bash
-# Mark the first migration as already-applied on the existing DB:
-atlas migrate apply --dir file://migrations --url "$DB_URL" --baseline <first_migration_timestamp>
+migrate -path internal/adapters/database/migrations/sql \
+        -database "$DATABASE_URL" down 1
 ```
 
-Then set `DB_MIGRATE=atlas` + `DB_AUTOMIGRATE=false`. Subsequent migrations apply
-normally.
+If a migration fails halfway, the database is left marked **dirty** and the app refuses to
+start. Fix the SQL, then clear the flag with `migrate ... force <version>` before retrying.
+See the [sql/README.md](../internal/adapters/database/migrations/sql/README.md) for details.
 
 ## Seed data is not a migration
 
-A migration may not insert rows. Reference/seed data lives in `seeds/` and is
-applied by `./seed` (`START_COMMAND=./seed` in the container), which runs
-*after* `atlas migrate apply`. The schema migration and the seed run are distinct
-steps — never combine them.
+Demo rows live in `internal/adapters/database/seeders/` and run from `main.go` **only when
+`APP_ENV=development`**. Seeders must be idempotent — they check whether the data already
+exists before inserting, so restarting the app never duplicates rows.
 
-`seeds/prod/` and `seeds/dev/` are independent, self-contained environments —
-`--env dev` alone is enough to boot a development database without touching the
-prod bucket. See `seeds/README.md` for the bucket model and per-file table.
-
-If a migration file was originally created with seed rows that were later moved to
-`seeds/`, leave the migration file in place (emptied) — Atlas keys applied
-revisions by filename. Removing or renaming the file would break the revision
-history on any database that has already applied it. Before emptying a migration
-file and changing its hash, verify against your pinned Atlas version that
-`migrate status` still reports OK on a database that had applied the original file.
-
-## Note on Atlas licensing
-
-The GORM provider (`external_schema`) requires the **official** Atlas binary
-(free, runs offline; Atlas Cloud is **not** required). `migrate diff`, `apply`,
-and `validate` work without a login. As of Atlas v0.38 `migrate lint` (deep
-destructive-change analysis) requires a free `atlas login` or the Community
-build — our CI uses `validate` + the drift check instead, which need no login. If
-fully-OSS tooling is a hard requirement, `golang-migrate` (hand-written SQL) is
-the alternative.
+Reference data that must exist in every environment (lookup tables, roles) does not belong in
+a seeder either; it belongs in a migration, so it is versioned and reviewable like any other
+schema change.

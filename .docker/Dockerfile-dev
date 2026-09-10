@@ -6,8 +6,10 @@ WORKDIR /app
 # Set permission tmp folder agar Air bisa buat binary executable
 RUN mkdir -p /app/tmp/ && chmod -R 777 /app/tmp/
 
-# Install air (untuk hot reload)
-RUN go install github.com/air-verse/air@latest
+# Install air (untuk hot reload).
+# Pinned, not @latest: air v1.67.2+ requires Go >= 1.26, which would break this image
+# every time upstream bumps its go directive. Raise this together with the base image.
+RUN go install github.com/air-verse/air@v1.67.1
 
 COPY go.mod go.sum ./
 RUN go mod download
