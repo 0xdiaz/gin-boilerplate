@@ -408,7 +408,12 @@ paths:
   /api/v1/auth/forgot-password:
     post:
       summary: Forgot password
-      description: Request a password reset token. In production the token is sent by email.
+      description: >-
+        Request a password reset. The response body is identical whether or not the email
+        exists, so this endpoint cannot be used to enumerate users, and the reset token is
+        never returned over HTTP. Delivery requires a configured EmailSender: in development
+        without one the token is written to the application log, and in every other
+        environment the request fails with 503.
       tags:
         - Auth
       requestBody:
@@ -426,6 +431,12 @@ paths:
                 $ref: '#/components/schemas/ApiResponse'
         '400':
           description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+        '503':
+          description: Password reset unavailable — no mailer configured outside development
           content:
             application/json:
               schema:

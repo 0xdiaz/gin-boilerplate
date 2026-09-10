@@ -660,7 +660,9 @@ MASTER_DB_HOST=postgres_db
 JWT_SECRET=your-jwt-secret-key-min-32-characters
 ```
 
-- Token expiry: 24 hours (configurable in `auth_service.go`)
+- Access token expiry: 15 minutes (`ACCESS_TOKEN_TTL_MINUTES`). Kept short because access
+  tokens are stateless and cannot be revoked — logout only revokes refresh tokens.
+- Refresh token expiry: 7 days (`REFRESH_TOKEN_TTL_DAYS`), hashed at rest and rotated on use.
 - Algorithm: HS256
 - Claims: user_id, email, exp, iat
 
@@ -710,24 +712,21 @@ make clean
 
 ## 🗄️ Database Migrations
 
-### Development Approach
+### One approach, every environment
 
-Uses GORM AutoMigrate for quick iteration:
+Schema changes are **versioned SQL files** applied by `golang-migrate`. There is no
+AutoMigrate: GORM models are used for querying only.
 
-```go
-// internal/adapters/database/migrations/migration.go
-func Migrate() {
-    models := []interface{}{
-        &models.User{},
-        // Add your models here
-    }
-    database.DB.AutoMigrate(models...)
-}
-```
+`migrations.Migrate()` runs on every startup from `main.go` and is **fatal on failure**, so
+the server never serves requests against a half-migrated schema. See
+[`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) for the full workflow.
 
-### Production Approach
+Every `.up.sql` ships with its `.down.sql`, and an applied migration is never edited — add a
+new pair instead.
 
-Uses SQL migration files with `golang-migrate`:
+### Running migrations by hand
+
+The same files can be driven with the `golang-migrate` CLI:
 
 ```bash
 # Install golang-migrate

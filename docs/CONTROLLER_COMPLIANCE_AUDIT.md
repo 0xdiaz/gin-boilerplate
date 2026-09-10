@@ -1,22 +1,11 @@
 # Controller Compliance Audit Against .docs Standards
 
-> ⚠️ **HISTORICAL — SUPERSEDED BY THE MODULAR REFACTOR.** This is a point-in-time audit (2026-02-03)
-> of the **pre-refactor layered layout** (`internal/app/controllers`, `internal/app/routers`), which
-> no longer exists. Code is now organized by business module under `internal/modules/<name>/` — see
-> **[MODULE_GUIDE.md](./MODULE_GUIDE.md)** (source of truth). The HTTP layer is now `handler.go` inside
-> each module (not a separate `*_controller.go`), and routes mount via `Module.RegisterRoutes(api)`
-> (not `internal/app/routers/`). **The findings below remain valid** — the modular `handler.go` files
-> still use struct-based handlers, response utilities, LogStart/LogFinish, and DI — but the **paths and
-> file names refer to the old layout.** Old → new mapping for the items audited here:
+> 📌 **Point-in-time audit (2026-02-03) of `internal/app/controllers` and
+> `internal/app/routers`** — the layout the code still uses today, so the findings below apply
+> as written. See **[MODULE_GUIDE.md](./MODULE_GUIDE.md)** for the layout.
 >
-> | Audited (pre-refactor) | Now (modular) |
-> |------------------------|----------------|
-> | `internal/app/controllers/auth_controller.go` | `internal/modules/auth/handler.go` |
-> | `internal/app/controllers/health_controller.go` | `internal/modules/health/handler.go` |
-> | `internal/app/controllers/example_controller.go` | `internal/modules/example/handler.go` |
-> | `internal/app/routers/` (`*_routes.go`, `index.go`) | each module's `Module.RegisterRoutes(api)` + `internal/bootstrap/server.go` |
->
-> This document is preserved as history; do not treat its paths as current guidance.
+> Re-run this audit after any significant controller change rather than assuming it is
+> still current.
 
 **Audit date:** 2026-02-03  
 **Standards sources:** `00_AI_CRITICAL_RULES.md`, `AI_QUICK_REFERENCE.md`, `AI_AGENT_RULES.md`, `CODING_STANDARDS.md`, `DESIGN_PATTERNS.md`, `OBSERVABILITY.md`

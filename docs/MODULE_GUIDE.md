@@ -1,102 +1,155 @@
-# Module Guide — Modular Service Layout
+# Project Layout Guide
 
 > **This is the source of truth for how code is organized in this service.**
-> Where older docs (DESIGN_PATTERNS, CODING_STANDARDS, AI_AGENT_RULES) describe an
-> `internal/app/...` + `internal/domain/...` layered layout, **this guide overrides them.**
+> It describes the layout that is actually in the repository. If any other document
+> disagrees with what is written here, this document wins and the other document is
+> the one that needs fixing.
 
 ## TL;DR
 
-- Each service is **one deployable** (one binary, one container, one Postgres).
-- Code is organized **by business module** (package-by-feature), not by technical layer.
-- A module owns its full vertical slice: `handler → service → repository → model`.
-- Modules talk to each other through a **public interface + constructor injection**, never by importing each other's guts.
-- Cross-cutting code lives in `pkg/` (the future shared kit). Per-service wiring lives in `internal/bootstrap/`.
+- One deployable: one binary, one container, one Postgres.
+- Code is organized **by technical layer**: HTTP → service → repository → model.
+- Wiring happens in **one place**: `internal/app/routers/index.go`.
+- Data access goes through the package-level `database.DB` handle in
+  `internal/adapters/database`.
+- Cross-cutting, domain-agnostic code lives in `pkg/`, which must never import `internal/`.
+- Unit tests live in `tests/unit/<layer>/`, with shared fakes in `tests/mocks/`.
 
 ## Directory layout
 
 ```
 .
-├── main.go                      # 3 lines: bootstrap.Run()
+├── main.go                            # config → db → migrate → seed (dev) → serve → graceful shutdown
 ├── internal/
-│   ├── bootstrap/               # the ONLY per-service wiring
-│   │   ├── bootstrap.go         #   Run(): config → db → modules → migrate → serve → shutdown
-│   │   ├── modules.go           #   Module interface + buildModules() (the list of modules)
-│   │   ├── server.go            #   gin engine + global middleware + route mounting
-│   │   └── swagger.go           #   OpenAPI/Swagger UI (debug only)
-│   ├── migrations/              # service-specific schema
-│   │   ├── migration.go         #   Run(db, models) — AutoMigrate
-│   │   └── sql/                 #   versioned SQL (production path)
-│   └── modules/                 # ← business modules (work happens here)
-│       ├── example/             #   THE reference module — copy this to make a new one
-│       │   ├── model.go         #     GORM model(s) the module owns
-│       │   ├── dto.go           #     request/response types (optional)
-│       │   ├── repository.go    #     data access (holds *gorm.DB, no globals)
-│       │   ├── service.go       #     business logic (defines the repo interface it needs)
-│       │   ├── handler.go       #     HTTP layer (defines the service interface it needs)
-│       │   ├── module.go        #     New(db), Name(), Models(), RegisterRoutes(), public API()
-│       │   └── service_test.go  #     co-located test (no DB needed — uses a fake repo)
-│       ├── auth/                #   real module: JWT auth, exposes Middleware() to others
-│       └── health/              #   system module: mounts /health, /metrics at ROOT
-└── pkg/                         # ← cross-cutting kit — must never import from internal/
-    ├── config/  logger/  metrics/  types/  utils/
-    ├── middleware/              # cors, request_id, request_log, metrics, rate_limit
-    ├── database/                # connect + replica resolver
-    └── ...                      # later: httpclient (HMAC inter-service), etc.
+│   ├── adapters/
+│   │   └── database/
+│   │       ├── database.go            #   DbConnection(master, replica), GetDB(), package-level DB
+│   │       ├── migrations/
+│   │       │   ├── migration.go       #     golang-migrate runner, fail-fast on startup
+│   │       │   └── sql/               #     versioned NNNNNN_name.up.sql / .down.sql pairs
+│   │       └── seeders/               #   idempotent demo data, development only
+│   ├── app/
+│   │   ├── controllers/               #   HTTP layer: <name>_controller.go
+│   │   ├── dto/                       #   request/response types: <name>_dto.go
+│   │   ├── middlewares/               #   auth, cors, metrics, rate_limit, request_id, request_log
+│   │   ├── routers/
+│   │   │   ├── router.go              #     gin engine + global middleware
+│   │   │   ├── index.go               #     RegisterRoutes(): builds repos + services, mounts groups
+│   │   │   ├── <name>_routes.go       #     Register<Name>Routes(group, service)
+│   │   │   └── swagger.go             #     OpenAPI/Swagger UI (debug only)
+│   │   └── services/                  #   business logic: <name>_service.go
+│   │       └── auth/                  #     multi-file service package (its own errors + interface)
+│   └── domain/
+│       ├── models/                    #   GORM models: <name>_model.go, each with TableName()
+│       └── repositories/              #   data access: <name>_repo.go
+├── pkg/                               # cross-cutting kit — must never import internal/
+│   ├── config/  logger/  metrics/  types/  utils/
+└── tests/
+    ├── unit/{controllers,services,middlewares}/   # package <x>_test, no database
+    ├── integration/{api,database}/                # needs a real database
+    ├── mocks/                                     # shared in-memory fakes
+    └── fixtures/
 ```
 
 ## The rules
 
-1. **One module = one Go package = one folder.** An AI agent or a person can own a module without touching others.
-2. **A module owns its tables.** Declare them in `Module.Models()`. No cross-module foreign keys; no reaching into another module's tables.
-3. **Call other modules only through their public surface** (`module.go`'s exported interface), injected via the constructor. Never import another module's unexported types.
-4. **`pkg/` is the shared kit.** It must never import from `internal/`. Anything you'd want identical across repos goes here.
-5. **`internal/bootstrap/` is the only place that knows the concrete module list.** Adding a module is one line in `buildModules()`.
+1. **One feature = one file per layer**, named after the feature: `auth_controller.go`,
+   `auth_service.go`, `user_repo.go`, `user_model.go`, `auth_dto.go`, `auth_routes.go`.
+2. **Layers only call downward:** controller → service → repository → model. A controller
+   never touches a repository; a repository never imports a service.
+3. **Repositories are the only place that touches `database.DB`.** Everything above them
+   receives a repository interface.
+4. **`internal/app/routers/index.go` is the only place that knows concrete types.** It
+   constructs repositories, injects them into services, and hands services to the
+   per-feature `Register*Routes` functions.
+5. **`pkg/` is the shared kit.** It must never import from `internal/`. Anything you would
+   want identical across services goes here.
+6. **`/health` and `/metrics` are mounted at the root**, not under `/api/v1`.
 
-## How to add a new module (copy the `example` recipe)
+## How to add a new feature
 
-1. `cp -r internal/modules/example internal/modules/<name>` and rename the package to `<name>`.
-2. Replace the model(s) in `model.go`; list them in `Module.Models()`.
-3. Implement `repository.go` (data access, holds the injected `*gorm.DB`).
-4. Implement `service.go` (business logic). Define the `repository` interface it needs **in this file** (consumer-defined interface → testable).
-5. Implement `handler.go` (HTTP). Define the `service` interface it needs **in this file**.
-6. In `module.go`: wire `New(db)`, list `Models()`, mount routes in `RegisterRoutes(api)`, and expose a minimal public `API` interface for other modules.
-7. Register it: add `<name>.New(db)` to `buildModules()` in `internal/bootstrap/modules.go`.
-8. Add a co-located `*_test.go` using a fake repo (see `example/service_test.go`) — no DB required.
+Follow the `auth` slice — it is the most recent and closest to these rules.
 
-That's it — no other file changes. Routes mount under `/api/v1/...`; migrations pick up your models automatically.
+1. **Migration** — add a versioned pair in `internal/adapters/database/migrations/sql/`:
+   `NNNNNN_create_<table>.up.sql` and the matching `.down.sql`. Never edit an applied migration.
+2. **Model** — `internal/domain/models/<name>_model.go`, with a `TableName()` method.
+   Keep the struct tags in sync with the migration.
+3. **Repository** — `internal/domain/repositories/<name>_repo.go`. Declare an exported
+   interface, an unexported struct implementing it, and a `New<Name>Repository()`
+   constructor that returns the interface. Wrap every error with `fmt.Errorf("...: %w", err)`
+   and log it. A missing row is `(nil, nil)`, not an error.
+4. **DTO** — `internal/app/dto/<name>_dto.go` for request and response shapes.
+5. **Service** — `internal/app/services/<name>_service.go`. A struct holding the repository
+   interfaces, a `New<Name>Service(...)` constructor, and `logger.LogStart`/`LogFinish`
+   around each exported method. Declare sentinel errors (`ErrUserNotFound`) here.
+6. **Controller** — `internal/app/controllers/<name>_controller.go`. A struct holding the
+   service, a `New<Name>Controller(service)` constructor, and methods taking `*gin.Context`.
+   Map sentinel errors to responses; always answer through `pkg/utils`.
+7. **Routes** — `internal/app/routers/<name>_routes.go` with
+   `Register<Name>Routes(group *gin.RouterGroup, service *services.<Name>Service)`.
+8. **Wire it** — in `internal/app/routers/index.go`: construct the repositories and service,
+   then call `Register<Name>Routes(apiV1, <name>Service)`.
+9. **Tests** — a fake in `tests/mocks/<name>_repo_mock.go` (with a
+   `var _ repositories.<Name>Repository = (*Mock<Name>Repository)(nil)` assertion) and unit
+   tests in `tests/unit/services/<name>_service_test.go`.
+10. **Seeder** (optional) — `internal/adapters/database/seeders/<name>_seeder.go`, made
+    idempotent and called from `seeders.Run()`.
 
-## Cross-module communication (in-process)
-
-A module exposes a small interface; the consumer receives it via its constructor.
+## Wiring example
 
 ```go
-// auth exposes its JWT guard and token validation:
-authMod := auth.New(db)
-authMod.Middleware()   // gin.HandlerFunc — used to protect routes
-authMod.Auth()         // auth.Servicer — ValidateToken, etc.
+// internal/app/routers/index.go — the single place that knows concrete types
+func RegisterRoutes(route *gin.Engine) {
+    RegisterHealthRoutes(route) // root-level probes
 
-// A module that needs auth gets it injected in buildModules():
-//   payments.New(db, authMod.Auth())
+    apiV1 := route.Group("/api/v1")
+    apiV1.Use(middlewares.RateLimitMiddleware())
+
+    userRepo := repositories.NewUserRepository()
+    refreshTokenRepo := repositories.NewRefreshTokenRepository()
+    authService := services.NewAuthService(userRepo, refreshTokenRepo)
+
+    RegisterAuthRoutes(apiV1, authService)
+
+    // Protected routes go behind the auth middleware.
+    protected := apiV1.Group("")
+    protected.Use(middlewares.AuthMiddleware(authService))
+}
 ```
 
-This keeps modules loosely coupled **and** makes the seam easy to cut later: if a module
-must become its own service, the in-process interface call becomes a network call, and
-nothing else changes.
+```go
+// internal/app/routers/auth_routes.go — one file per feature
+func RegisterAuthRoutes(group *gin.RouterGroup, authService *services.AuthService) {
+    authController := controllers.NewAuthController(authService)
+    authRoutes := group.Group("/auth")
+    authRoutes.POST("/login", authController.Login)
+}
+```
 
 ## Testing
 
-- **Prefer co-locating tests** with the module (`internal/modules/<name>/*_test.go`).
-- Unit-test the service with a **fake repository** (no DB) — see `example/service_test.go`.
-- Handler tests use `httptest` + a mocked service interface.
-- Unit tests are co-located per module; use in-package fakes (no separate `tests/` tree).
-- `make test` runs `./...`.
+- Unit tests live in `tests/unit/<layer>/`, in package `<layer>_test` (black box).
+- Services are tested against the in-memory fakes in `tests/mocks/` — no database.
+- Integration tests that need a real database live in `tests/integration/`.
+- `make test` runs the unit suite; `make test-coverage` produces a coverage report.
 
-## Per-service stamp checklist (when using this boilerplate for a new service)
+## Per-service stamp checklist (when reusing this codebase for a new service)
 
 1. Update `module` in `go.mod` to `github.com/<org>/<service-name>`.
-2. Run find/replace `github.com/0xdiaz/gin-boilerplate` → new module path across `*.go`, `*.md`, `go.mod`.
-3. Run `gofmt -w .` (import groups may resort after the rename).
-4. Verify with `go build ./...`.
-5. Rename the DB schema in `.env.example` (`MASTER_DB_SCHEMA`).
-6. Update `OTEL_SERVICE_NAME` in `.env.example` and `bootstrap.go`.
-7. Delete or replace the `example` module with your first real module.
+2. Find/replace `github.com/0xdiaz/gin-boilerplate` → the new module path across `*.go`, `*.md`, `go.mod`.
+3. Run `gofmt -w .` (import groups resort after the rename).
+4. Update `container_name`, volume names, and host ports in `.docker/docker-compose-*.yml`
+   so the new service does not collide with other services on the same machine.
+5. Verify with `go build ./...`.
+6. Update the database name in `.env.example`.
+7. Delete or replace the `example` slice with your first real feature.
+
+## Planned direction (not implemented)
+
+A package-by-feature layout — `internal/modules/<name>/{model,repository,service,handler,module}.go`
+with per-module route registration and co-located tests — was drafted for this codebase but
+**was never implemented**. No `internal/modules/` or `internal/bootstrap/` directory exists.
+
+It is recorded here only so the intent is not lost. Until that migration actually happens,
+the layout documented above is the one to follow, and any example showing `internal/modules/...`
+is describing code that does not exist.

@@ -2,12 +2,12 @@
 
 Welcome to the project documentation. This guide helps you navigate all documentation files.
 
-> 🧭 **Architecture: modular service.** Code is organized **by business module** under
-> `internal/modules/<name>/` (each owning `model.go`, `dto.go`, `repository.go`, `service.go`,
-> `handler.go`, `module.go`). Cross-cutting code lives in `pkg/`; per-service wiring in
-> `internal/bootstrap/`. **[`MODULE_GUIDE.md`](./MODULE_GUIDE.md) is the source of truth** and
-> overrides any older doc (DESIGN_PATTERNS, CODING_STANDARDS, AI_AGENT_RULES) that still describes
-> the previous `internal/app` / `internal/domain` layered layout.
+> 🧭 **Architecture: layered service.** Code is organized **by technical layer** —
+> `internal/app/{controllers,dto,middlewares,routers,services}` and
+> `internal/domain/{models,repositories}`, with the database adapter in
+> `internal/adapters/database` and cross-cutting code in `pkg/`. A feature is one file per
+> layer, sharing a name prefix (`auth_controller.go`, `auth_service.go`, `user_repo.go`).
+> **[`MODULE_GUIDE.md`](./MODULE_GUIDE.md) is the source of truth** for the layout.
 
 ---
 
@@ -16,10 +16,9 @@ Welcome to the project documentation. This guide helps you navigate all document
 ### Reading Order (MANDATORY)
 
 0. **[`MODULE_GUIDE.md`](./MODULE_GUIDE.md)** 🧭 **SOURCE OF TRUTH** (read first for structure)
-   - How code is organized: one folder per business module under `internal/modules/`
-   - The vertical slice: `handler → service → repository → model`
-   - How to add a module (copy the `example` reference module)
-   - Overrides the layered-layout descriptions in the deeper reference docs
+   - How code is organized: one folder per layer under `internal/app/` and `internal/domain/`
+   - The dependency direction: `controller → service → repository → model`
+   - How to add a feature (copy the `auth` reference slice)
 
 1. **[`00_AI_CRITICAL_RULES.md`](./00_AI_CRITICAL_RULES.md)** ⚠️ **START HERE for rules** (100 lines, 2 min)
    - Absolute non-negotiable rules
@@ -54,7 +53,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 | File | Size | Purpose | When to Read |
 |------|------|---------|--------------|
-| **MODULE_GUIDE.md** 🧭 | ~100 lines | **Project structure (source of truth):** modular layout under `internal/modules/`; overrides layered-layout docs | **FIRST - for structure** |
+| **MODULE_GUIDE.md** 🧭 | ~180 lines | **Project structure (source of truth):** layered layout, how to add a feature | **FIRST - for structure** |
 | **00_AI_CRITICAL_RULES.md** | 100 lines | Non-negotiable rules | **FIRST - for rules** |
 | **AI_AGENT_RULES.md** | ~700 lines | Mandatory rules for AI (file/function size, testing, docs, errors) | **IMPORTANT** |
 | **AI_QUICK_REFERENCE.md** | 405 lines | Templates & checklists | Before writing code |
@@ -66,7 +65,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 | File | Purpose |
 |------|---------|
-| **MODULE_GUIDE.md** 🧭 | Source of truth for project structure: modular layout (`internal/modules/<name>/`), how to add a module, cross-module communication |
+| **MODULE_GUIDE.md** 🧭 | Source of truth for project structure: the layered layout, how to add a feature, wiring |
 | **CODING_STANDARDS.md** | Comprehensive coding standards, naming conventions, best practices |
 | **DESIGN_PATTERNS.md** | Architecture patterns, layer responsibilities, implementation guides |
 | **CONFIGURATION.md** | Environment configuration, validation, secrets management |
@@ -86,19 +85,20 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 ### I Want To...
 
-**Add a new module (the modular way — start here):**
-1. Read: `MODULE_GUIDE.md` → "How to add a new module"
-2. Copy the reference module: `internal/modules/example/`
-3. Register it: one line in `buildModules()` in `internal/bootstrap/modules.go`
+**Add a new feature (start here):**
+1. Read: `MODULE_GUIDE.md` → "How to add a new feature"
+2. Copy the reference slice: `auth` (model, repo, dto, service, controller, routes, mock, test)
+3. Wire it: build the repo + service in `internal/app/routers/index.go`, then call
+   `Register<Name>Routes(apiV1, ...)`
 
-**Write a new handler (HTTP layer of a module):**
+**Write a new controller (the HTTP layer):**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1 — struct-based + DI)
-2. Reference: `internal/modules/example/handler.go`
-3. Patterns: `AI_QUICK_REFERENCE.md` → Templates section; `DESIGN_PATTERNS.md` (layered terminology, see MODULE_GUIDE for the modular mapping)
+2. Reference: `internal/app/controllers/auth_controller.go`
+3. Patterns: `AI_QUICK_REFERENCE.md` → Layer Templates; `DESIGN_PATTERNS.md` §6.1
 
-**Write a new service (business logic of a module):**
+**Write a new service (business logic):**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 1 — struct-based + DI)
-2. Reference: `internal/modules/example/service.go`
+2. Reference: `internal/app/services/auth/auth_service.go`
 3. Patterns: `AI_QUICK_REFERENCE.md` → Templates section; `DESIGN_PATTERNS.md` (layered terminology, see MODULE_GUIDE for the modular mapping)
 
 **Return a response:**
@@ -108,7 +108,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 **Write tests:**
 1. Read: `MODULE_GUIDE.md` → Testing (co-locate `*_test.go` with the module; fake repo, no DB)
-2. Reference: `internal/modules/example/service_test.go`
+2. Reference: `tests/unit/services/auth_service_test.go`
 3. Guide: `tests/README.md` (shared mocks + legacy/integration tests)
 
 **Handle errors:**
@@ -117,7 +117,7 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 **Use dependency injection:**
 1. Read: `00_AI_CRITICAL_RULES.md` (Tier 0, Rule 4)
-2. Details: `DESIGN_PATTERNS.md` → § Core Patterns (Dependency Injection); modular DI: each module's `New(db)` constructor
+2. Details: `DESIGN_PATTERNS.md` → § Core Patterns (Dependency Injection); DI here: each layer's `New*` constructor, assembled in `routers/index.go`
 
 **Setup observability (health checks, metrics):**
 1. Guide: `OBSERVABILITY.md`
@@ -166,16 +166,16 @@ Welcome to the project documentation. This guide helps you navigate all document
 
 ### Mistake #4: Tests in the Wrong Place
 ```
-✅ internal/modules/auth/service_test.go        // Co-located with the module (preferred)
-✅ tests/unit/...                                // Legacy/shared tests still live here
+✅ tests/unit/services/auth_service_test.go     // unit test, package services_test
+✅ tests/mocks/user_repo_mock.go                // the shared fake it drives
+❌ internal/app/services/auth_service_test.go    // tests do not live beside the code here
 ```
 
-**Why:** Under the modular layout, **tests are co-located** with the module they cover
-(`internal/modules/<name>/*_test.go`) — see `MODULE_GUIDE.md` → Testing and
-`internal/modules/example/service_test.go`. Older docs that say "tests MUST live in `tests/`
-and co-located tests are rejected" describe the pre-refactor layered layout; `MODULE_GUIDE.md`
-overrides them. New modules should prefer in-package fakes and co-located tests; `tests/` remains
-for shared mocks and legacy/integration tests.
+**Why:** unit tests live in the root `tests/` tree, in package `<layer>_test`, so they exercise
+the code through its exported surface exactly as production callers do. The fakes live in
+`tests/mocks/` so one interface change surfaces in one place — each carries a
+`var _ repositories.UserRepository = (*MockUserRepository)(nil)` assertion. See
+`MODULE_GUIDE.md` → Testing and `tests/unit/services/auth_service_test.go`.
 
 ### Mistake #5: Exceeding File Size
 ```
@@ -207,7 +207,7 @@ for shared mocks and legacy/integration tests.
 **Last Updated:** 2026-02-03
 
 **Recent Changes:**
-- **Modular refactor:** code is now organized by business module under `internal/modules/<name>/` (was `internal/app` / `internal/domain` layered layout). See `MODULE_GUIDE.md` (source of truth). Tests are now co-located with their module. The `CONTROLLER_COMPLIANCE_AUDIT.md` and `SERVICE_COMPLIANCE_AUDIT.md` docs are historical (they audited the pre-refactor layout).
+- **Docs realigned with the code:** the doc set previously described a package-by-feature layout (`internal/modules/<name>/`, `internal/bootstrap/`, co-located tests) that was never implemented. Every doc now describes the layered layout that actually exists. See `MODULE_GUIDE.md` (source of truth), whose "Planned direction" section records the unbuilt modular design.
 - API versioning (`/api/v1`), global rate limit, single config source, request_id/LogStart/LogFinish logging, pluggable EmailSender (see "Recent changes" above).
 - `AI_AGENT_RULES.md` is kept (important for AI agents).
 - Added "New developer onboarding" path in this file.
@@ -221,10 +221,10 @@ for shared mocks and legacy/integration tests.
 □ Read MODULE_GUIDE.md (project structure — source of truth)
 □ Read 00_AI_CRITICAL_RULES.md (100 lines)
 □ Read AI_QUICK_REFERENCE.md (405 lines)
-□ Understand the modular layout (one folder per module under internal/modules/)
+□ Understand the layered layout (internal/app/* and internal/domain/*)
 □ Understand struct-based pattern requirement
 □ Understand response utilities requirement
-□ Understand co-located tests (internal/modules/<name>/*_test.go)
+□ Understand where tests live (tests/unit/<layer>/, fakes in tests/mocks/)
 □ Know file size limits (300 lines max)
 □ Know function size limits (100 lines max)
 ```

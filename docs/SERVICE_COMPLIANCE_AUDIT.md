@@ -1,23 +1,11 @@
 # Service Compliance Audit Against .docs Standards
 
-> ⚠️ **HISTORICAL — SUPERSEDED BY THE MODULAR REFACTOR.** This is a point-in-time audit (2026-02-03)
-> of the **pre-refactor layered layout** (`internal/app/services`), which no longer exists. Code is now
-> organized by business module under `internal/modules/<name>/` — see **[MODULE_GUIDE.md](./MODULE_GUIDE.md)**
-> (source of truth). Each module's business logic now lives in `service.go` (split further when needed,
-> e.g. auth's `service.go` + `service_tokens.go`) and defines the repository interface it consumes in-package.
-> **The findings below remain valid** — the modular services are still struct-based with DI, avoid
-> `gin.Context` (except the documented DataTables exception), go through a repository, wrap errors, and stay
-> within size limits — but the **paths and file names refer to the old layout.** Old → new mapping for the
-> items audited here:
+> 📌 **Point-in-time audit (2026-02-03) of `internal/app/services`** — the layout the code
+> still uses today, so the findings below apply as written. See
+> **[MODULE_GUIDE.md](./MODULE_GUIDE.md)** for the layout.
 >
-> | Audited (pre-refactor) | Now (modular) |
-> |------------------------|----------------|
-> | `internal/app/services/auth/` (`auth_service.go`, `auth_service_tokens.go`) | `internal/modules/auth/` (`service.go`, `service_tokens.go`) |
-> | `internal/app/services/example_service.go` | `internal/modules/example/service.go` |
-> | `internal/app/services/health_service.go` | `internal/modules/health/service.go` |
->
-> The two-file split for auth (logic + tokens) was preserved through the refactor. This document is
-> preserved as history; do not treat its paths as current guidance.
+> Re-run this audit after any significant service change rather than assuming it is still
+> current.
 
 **Audit date:** 2026-02-03  
 **Standards sources:** `00_AI_CRITICAL_RULES.md`, `AI_QUICK_REFERENCE.md`, `AI_AGENT_RULES.md`, `CODING_STANDARDS.md`, `DESIGN_PATTERNS.md`

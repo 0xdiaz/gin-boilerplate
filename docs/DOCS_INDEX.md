@@ -10,7 +10,7 @@
 
 | File | Time | Purpose |
 |------|------|---------|
-| [MODULE_GUIDE.md](MODULE_GUIDE.md) | 3 min | **Project structure (source of truth).** Modular layout under `internal/modules/`; overrides old `internal/app`/`internal/domain` references in other docs. |
+| [MODULE_GUIDE.md](MODULE_GUIDE.md) | 3 min | **Project structure (source of truth).** The layered layout under `internal/app/` and `internal/domain/`, and how to add a feature. |
 | [00_AI_CRITICAL_RULES.md](00_AI_CRITICAL_RULES.md) | 2 min | Non-negotiable rules (Tier 0-2) |
 | [AI_QUICK_REFERENCE.md](AI_QUICK_REFERENCE.md) | 3 min | Code templates for all layers |
 
@@ -25,7 +25,7 @@
 | **Struct-based Services** | DESIGN_PATTERNS.md | § Implementation Patterns | `struct`, `NewService`, `business logic` |
 | **Repository Pattern** | DESIGN_PATTERNS.md | § Implementation Patterns | `repository`, `CRUD`, `database`, `function-based` |
 | **Clean Architecture** | DESIGN_PATTERNS.md | § Architecture | `layers`, `dependencies`, `separation of concerns` |
-| **Directory Structure** | DESIGN_PATTERNS.md | § Directory Structure (modular layout: see MODULE_GUIDE) | `folder`, `organization`, `internal/modules/`, `pkg/` |
+| **Directory Structure** | DESIGN_PATTERNS.md | § Directory Structure (see also MODULE_GUIDE) | `folder`, `organization`, `internal/app/`, `internal/domain/`, `pkg/` |
 
 ### Response & API
 | Topic | File | Section/Keyword | Keywords |
@@ -38,7 +38,7 @@
 ### Routing & Middleware
 | Topic | File | Section/Keyword | Keywords |
 |-------|------|-------|----------|
-| **Router Organization** | CODING_STANDARDS.md | §11 API Design | `routes`, `Register*Routes` (modular: `Module.RegisterRoutes`), `feature` |
+| **Router Organization** | CODING_STANDARDS.md | §11 API Design | `routes`, `Register*Routes`, `index.go`, `feature` |
 | **Middleware** | DESIGN_PATTERNS.md | § Implementation Patterns | `gin.HandlerFunc`, `c.Next()`, `auth`, `rate limit` |
 | **Rate Limiting** | CONFIGURATION.md | Optional vars, Example 3 | `RateLimitMiddleware`, `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`, per-IP, token bucket; config read in middleware |
 
@@ -59,8 +59,8 @@
 ### File Organization
 | Topic | File | Section/Keyword | Keywords |
 |-------|------|-------|----------|
-| **DTO Placement** | CODING_STANDARDS.md | §1 File Organization | `dto`, per-module `dto.go`, `request`, `response` |
-| **Constants** | CODING_STANDARDS.md | §1 File Organization | `constants`, module-local (no `pkg/enums`), `const`, `iota` |
+| **DTO Placement** | CODING_STANDARDS.md | §1 File Organization | `dto`, `internal/app/dto`, `request`, `response` |
+| **Constants** | CODING_STANDARDS.md | §1 File Organization | `constants`, next to the model (no `pkg/enums`), `const`, `iota` |
 | **Import Cycles** | CODING_STANDARDS.md | §1 File Organization | `import cycle`, `pkg →`, `internal →` |
 
 ### Observability
@@ -121,8 +121,8 @@
 
 ```
 File Size Limits         §1  (MAX 300 lines, warning at 250)
-DTO Placement            §1  (per-module dto.go)
-Constants                §1  (module-local; no pkg/enums)
+DTO Placement            §1  (internal/app/dto/<name>_dto.go)
+Constants                §1  (next to the model; no pkg/enums)
 Import Cycles            §1  (how to avoid)
 Code Structure & Imports §3
 Error Handling           §5  (MUST wrap errors)
@@ -130,7 +130,7 @@ Testing                  §7  (70% coverage; modular: co-locate *_test.go — se
 Database & GORM          §10
 Standard Response Format §11 (success/message/data/errors)
 Response Utilities       §11 (utils.Ok, utils.Created, etc.)
-Router Organization      §11 (modular: each module's RegisterRoutes; doc shows one-file-per-feature)
+Router Organization      §11 (one <name>_routes.go per feature, wired in index.go)
 ```
 
 ---
@@ -140,7 +140,7 @@ Router Organization      §11 (modular: each module's RegisterRoutes; doc shows 
 > Section line numbers are intentionally omitted (this doc is actively maintained and line numbers
 > drift). Search the **§ heading**. Note: DESIGN_PATTERNS uses the older layered terminology
 > (controllers/services in `internal/app`); for the current modular layout see MODULE_GUIDE.md —
-> the HTTP layer is `handler.go` per module.
+> the HTTP layer is `internal/app/controllers/<name>_controller.go`.
 
 #### Critical Sections
 
@@ -187,33 +187,34 @@ Anti-Patterns             §13 (what NOT to do)
 
 > Line numbers below are kept only for files that did not move (`AI_QUICK_REFERENCE.md`,
 > `00_AI_CRITICAL_RULES.md`). For `DESIGN_PATTERNS.md` / `CODING_STANDARDS.md` use the **§ section**
-> (their line numbers drift). For the modular layout, start from MODULE_GUIDE.md.
+> (their line numbers drift). For the layout, start from MODULE_GUIDE.md.
 
-### "I need to add a new module" (the modular way — start here)
-1. Read: `MODULE_GUIDE.md` → "How to add a new module"
-2. Copy: `internal/modules/example/` (the reference module)
-3. Register: one line in `buildModules()` in `internal/bootstrap/modules.go`
+### "I need to add a new feature" (start here)
+1. Read: `MODULE_GUIDE.md` → "How to add a new feature"
+2. Copy: the `auth` slice (model, repo, dto, service, controller, routes, mock, test)
+3. Wire it: build the repo + service in `internal/app/routers/index.go`, then call
+   `Register<Name>Routes(apiV1, ...)`
 
-### "I need to create a new handler" (HTTP layer of a module)
+### "I need to create a new controller" (the HTTP layer)
 1. Read: `00_AI_CRITICAL_RULES.md` → Architecture Pattern
-2. Reference: `internal/modules/example/handler.go`
-3. Patterns: `DESIGN_PATTERNS.md` → § Implementation Patterns (uses old controller terminology)
+2. Reference: `internal/app/controllers/auth_controller.go`
+3. Patterns: `DESIGN_PATTERNS.md` → § Implementation Patterns
 4. Response Utils: `CODING_STANDARDS.md` → § 11 API Design
 
-### "I need to create a new service" (business logic of a module)
+### "I need to create a new service" (the business-logic layer)
 1. Read: `00_AI_CRITICAL_RULES.md` → Architecture Pattern
-2. Reference: `internal/modules/example/service.go`
+2. Reference: `internal/app/services/auth/auth_service.go`
 3. Patterns: `DESIGN_PATTERNS.md` → § Implementation Patterns
 4. Error Handling: `CODING_STANDARDS.md` → § 5 Error Handling
 
 ### "I need to add routes"
-1. Mount them in the module's `Module.RegisterRoutes(api)` (modular layout) — see `internal/modules/auth/module.go`
+1. Add `internal/app/routers/<name>_routes.go` with `Register<Name>Routes(group, service)` — see `internal/app/routers/auth_routes.go`
 2. Read: `00_AI_CRITICAL_RULES.md` → Router Organization
 3. Details: `CODING_STANDARDS.md` → § 11 API Design (describes old one-file-per-feature routers)
 
 ### "I need to write tests"
 1. Read: `MODULE_GUIDE.md` → Testing (co-locate `*_test.go`; fake repo, no DB)
-2. Reference: `internal/modules/example/service_test.go`
+2. Reference: `tests/unit/services/auth_service_test.go`
 3. Template: `AI_QUICK_REFERENCE.md` → Test Templates
 4. Patterns: `DESIGN_PATTERNS.md` → § Testing
 
@@ -223,7 +224,7 @@ Anti-Patterns             §13 (what NOT to do)
 3. Patterns: `DESIGN_PATTERNS.md` → § Error Handling
 
 ### "I need to create database models"
-1. Reference: `internal/modules/example/model.go`; list models in `Module.Models()`
+1. Reference: `internal/domain/models/user_model.go`; add a versioned migration for the table
 2. Template: `AI_QUICK_REFERENCE.md` → Model Template
 3. Details: `CODING_STANDARDS.md` → § 10 Database
 4. Repository: `DESIGN_PATTERNS.md` → § Implementation Patterns (Repository)
@@ -233,9 +234,9 @@ Anti-Patterns             §13 (what NOT to do)
 ## 🔑 Critical Reminders
 
 ### TIER 0 - NEVER VIOLATE
-1. ✅ **Struct-based** handlers & services (NOT standalone functions)
+1. ✅ **Struct-based** controllers & services (NOT standalone functions)
 2. ✅ **Use response utilities** (NOT c.JSON directly)
-3. ✅ **Co-locate tests with the module** (`internal/modules/<name>/*_test.go`); `tests/` holds shared mocks + legacy/integration tests. (Older docs say "tests MUST live in `tests/`" — that is the pre-refactor rule; MODULE_GUIDE overrides it.)
+3. ✅ **Tests live in `tests/unit/<layer>/`** (package `<layer>_test`), with shared fakes in `tests/mocks/`
 4. ✅ **Dependency injection** via New* constructors
 
 ### TIER 1 - HARD LIMITS
@@ -246,7 +247,7 @@ Anti-Patterns             §13 (what NOT to do)
 ### TIER 2 - CRITICAL PATTERNS
 - All responses use `pkg/utils` functions
 - All errors logged with `logger.Errorf`
-- Routing: each module mounts its own routes in `Module.RegisterRoutes(api)` (modular layout). Older docs describe one router file per feature (`{feature}_routes.go`) from the pre-refactor layout.
+- Routing: one router file per feature (`<name>_routes.go`), all wired from `internal/app/routers/index.go`.
 
 ---
 

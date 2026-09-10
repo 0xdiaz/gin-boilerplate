@@ -34,7 +34,7 @@ All JSON responses use the same top-level structure.
 - **Token:** JWT access token from login or register (or refresh).
 - **Missing/invalid:** Respond with `401 Unauthorized` and the standard error response shape above.
 
-**Implementation:** JWT guard in [internal/modules/auth/middleware.go](../internal/modules/auth/middleware.go), exposed to other modules as `auth.Module.Middleware()` (validation via `auth.Servicer.ValidateToken`). The protected route `GET /api/v1/profile` uses it.
+**Implementation:** JWT guard in [internal/app/middlewares/auth.go](../internal/app/middlewares/auth.go), applied as `middlewares.AuthMiddleware(authService)` (validation via `auth.AuthServicer.ValidateToken`). The protected route `GET /api/v1/profile` uses it.
 
 **Stability:** Header name and `Bearer ` prefix are stable. Changing to another scheme (e.g. API key in header) is a breaking change.
 
