@@ -14,6 +14,7 @@ import (
 	"github.com/0xdiaz/gin-boilerplate/internal/domain/repositories"
 	"github.com/0xdiaz/gin-boilerplate/pkg/config"
 	"github.com/0xdiaz/gin-boilerplate/tests/mocks"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -304,6 +305,9 @@ func TestLogoutAll(t *testing.T) {
 }
 
 // TestForgotPassword tests forgot password functionality using MockUserRepository.
+//
+// The raw reset token must never be returned to the caller in any branch: doing
+// so lets anyone who knows an email address take over that account.
 func TestForgotPassword(t *testing.T) {
 	mockRepo := mocks.NewMockUserRepository()
 	// Seed user for "Valid email - user exists" case
@@ -314,25 +318,21 @@ func TestForgotPassword(t *testing.T) {
 		name        string
 		email       string
 		expectError error
-		expectToken bool
 	}{
 		{
 			name:        "Valid email - user exists",
 			email:       "user@example.com",
 			expectError: nil,
-			expectToken: true,
 		},
 		{
 			name:        "Email not found",
 			email:       "nonexistent@example.com",
 			expectError: auth.ErrUserNotFound,
-			expectToken: false,
 		},
 		{
 			name:        "Invalid email format - no such user",
 			email:       "invalid-email",
 			expectError: auth.ErrUserNotFound,
-			expectToken: false,
 		},
 	}
 
@@ -347,16 +347,30 @@ func TestForgotPassword(t *testing.T) {
 			if tt.expectError != nil {
 				assert.Error(t, err)
 				assert.True(t, errors.Is(err, tt.expectError), "expected %v", tt.expectError)
-				assert.Empty(t, token)
 			} else {
 				assert.NoError(t, err)
-				if tt.expectToken {
-					assert.NotEmpty(t, token)
-					assert.Len(t, token, 64)
-				}
 			}
+			assert.Empty(t, token, "ForgotPassword must never return the raw reset token")
 		})
 	}
+}
+
+// TestForgotPasswordFailsClosedWithoutMailer asserts that outside development a
+// missing EmailSender makes the request fail loudly instead of leaking the token
+// or silently pretending an email was sent.
+func TestForgotPasswordFailsClosedWithoutMailer(t *testing.T) {
+	previousEnv := viper.GetString("APP_ENV")
+	viper.Set("APP_ENV", config.EnvProduction)
+	t.Cleanup(func() { viper.Set("APP_ENV", previousEnv) })
+
+	mockRepo := mocks.NewMockUserRepository()
+	mockRepo.AddUserByEmail("user@example.com", &models.User{ID: 1, Email: "user@example.com", Name: "User"})
+	service := newAuthServiceWithRepo(mockRepo)
+
+	token, err := service.ForgotPassword(context.Background(), &dto.ForgotPasswordRequest{Email: "user@example.com"})
+
+	assert.ErrorIs(t, err, auth.ErrMailerNotConfigured)
+	assert.Empty(t, token)
 }
 
 // TestResetPassword tests password reset functionality using MockUserRepository.

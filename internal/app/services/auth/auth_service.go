@@ -26,6 +26,10 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 	ErrInvalidResetToken   = errors.New("invalid or expired reset token")
 	ErrResetTokenExpired   = errors.New("reset token has expired")
+	// ErrMailerNotConfigured is returned by ForgotPassword outside development
+	// when no EmailSender is wired. The raw reset token must never be handed
+	// back to the caller, so the request fails closed instead.
+	ErrMailerNotConfigured = errors.New("password reset unavailable: no mailer configured")
 )
 
 // AuthService handles authentication-related business logic

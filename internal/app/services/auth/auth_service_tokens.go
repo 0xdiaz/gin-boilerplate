@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/0xdiaz/gin-boilerplate/internal/app/dto"
+	"github.com/0xdiaz/gin-boilerplate/pkg/config"
 	"github.com/0xdiaz/gin-boilerplate/pkg/logger"
 )
 
@@ -191,8 +192,19 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req *dto.ForgotPasswor
 		logger.LogFinish(ctx, "AuthService.ForgotPassword", nil, start)
 		return "", nil
 	}
-	logger.LogFinish(ctx, "AuthService.ForgotPassword", nil, start)
-	return resetToken, nil
+
+	// No mailer wired. The raw token must never travel back to the caller:
+	// anyone who knows an email address could otherwise reset that account.
+	// Development logs it for convenience; every other environment fails closed.
+	if config.IsDevelopment() {
+		logger.Warnf("no mailer configured; reset token for %s (development only): %s", user.Email, resetToken)
+		logger.LogFinish(ctx, "AuthService.ForgotPassword", nil, start)
+		return "", nil
+	}
+
+	logger.Errorf("no mailer configured; refusing to issue password reset for %s", user.Email)
+	logger.LogFinish(ctx, "AuthService.ForgotPassword", ErrMailerNotConfigured, start)
+	return "", ErrMailerNotConfigured
 }
 
 // ResetPassword resets user password using a valid reset token.

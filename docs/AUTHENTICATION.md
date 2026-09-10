@@ -228,11 +228,29 @@ User → POST /api/v1/auth/register → auth.Handler → auth.Service → auth.R
 
 ### Password reset and email
 
-In production, the reset token should be sent by email instead of returned in the API response. The module supports this via a pluggable **EmailSender** interface:
+The reset token is **never** returned in the API response, in any environment.
+`POST /auth/forgot-password` always answers with the same generic body regardless
+of whether the email exists, so the endpoint cannot be used to enumerate users
+or to take over an account.
 
-- **Interface:** `auth.EmailSender` (in `internal/modules/auth/mailer.go`) with a single method `SendPasswordResetEmail(to, resetToken string) error`. Implement this in your project (e.g. SMTP, SendGrid, SES).
-- **Wire-up:** Pass your implementation into `auth.NewWithMailer(db, mailer)` (which calls `NewService(NewRepository(db), mailer)`). When `mailer` is non-nil, `ForgotPassword` sends the token via email and returns an empty string; the handler then omits the token from the response. When `mailer` is nil (default), the token is returned in the response for development and testing.
-- **Default:** `auth.New(db)` calls `NewWithMailer(db, nil)`, so by default the token is returned in the response. To enable production-style behaviour, implement `EmailSender` and swap `auth.New(db)` for `auth.NewWithMailer(db, yourMailer)` in `buildModules()` (`internal/bootstrap/modules.go`).
+Delivery is handled by a pluggable **EmailSender**:
+
+- **Interface:** `auth.EmailSender` (in `internal/app/services/auth/mailer.go`), a single
+  method `SendPasswordResetEmail(to, resetToken string) error`. Implement it for
+  SMTP, SendGrid, SES, or whatever you use.
+- **Wire-up:** pass your implementation as the third argument of
+  `auth.NewAuthService(userRepo, refreshTokenRepo, mailer)` in
+  `internal/app/routers/index.go`.
+- **When no mailer is wired:**
+  - `APP_ENV=development` — the token is written to the application log with a
+    warning, so local testing still works. It never leaves the server over HTTP.
+  - any other environment — `ForgotPassword` fails closed with
+    `auth.ErrMailerNotConfigured` and the endpoint answers
+    `503 Service Unavailable`. A misconfigured deployment is loud, not silently
+    insecure.
+
+> **Before going to production:** implement `EmailSender` and wire it up. Password
+> reset is non-functional (503) until you do — by design.
 
 ---
 
