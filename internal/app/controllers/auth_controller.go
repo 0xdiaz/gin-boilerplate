@@ -31,6 +31,8 @@ func authErrToAPIError(err error) *types.APIError {
 		return &types.APIError{Code: http.StatusBadRequest, Message: "Invalid reset token", Details: nil}
 	case errors.Is(err, auth.ErrResetTokenExpired):
 		return &types.APIError{Code: http.StatusBadRequest, Message: "Reset token has expired", Details: nil}
+	case errors.Is(err, auth.ErrMailerNotConfigured):
+		return &types.APIError{Code: http.StatusServiceUnavailable, Message: "Password reset is temporarily unavailable", Details: nil}
 	default:
 		return nil
 	}
@@ -167,7 +169,8 @@ func (ctrl *AuthController) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	resetToken, err := ctrl.service.ForgotPassword(ctx, &req)
+	// Return value deliberately discarded: the reset token must never leave the server.
+	_, err = ctrl.service.ForgotPassword(ctx, &req)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
 			logger.LogFinish(ctx, "AuthController.ForgotPassword", err, start)
@@ -186,11 +189,9 @@ func (ctrl *AuthController) ForgotPassword(c *gin.Context) {
 	}
 
 	logger.LogFinish(ctx, "AuthController.ForgotPassword", nil, start)
-	data := map[string]interface{}{"message": "If the email exists, a password reset link has been sent"}
-	if resetToken != "" {
-		data["token"] = resetToken
-	}
-	utils.Ok(c, data, "Password reset initiated")
+	// Identical to the user-not-found branch above: never reveal whether the
+	// email exists, and never return the reset token itself.
+	utils.Ok(c, nil, "If the email exists, a password reset link has been sent")
 }
 
 // ResetPassword handles password reset endpoint.
